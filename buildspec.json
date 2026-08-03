@@ -33,9 +33,9 @@
     },
     "name": "obs-shorts-vertical",
     "displayName": "Vertical Shorts Plugin",
-    "version": "1.0.2",
+    "version": "1.0.0",
     "author": "Vertical Shorts Plugin Contributors",
-    "website": "https://github.com/PFS2689/Test-vertical-plugin",
+    "website": "https://github.com/PFS2689/vertical-shorts-plugin",
     "email": "noreply@example.com",
     "platformConfig": {
         "macos": {
