@@ -49,7 +49,7 @@ bool obs_module_load(void)
 	obs_frontend_add_dock_by_id("ShortsVerticalDock", obs_module_text("ShortsDock"), g_dock);
 	obs_frontend_add_save_callback(SaveCallback, nullptr);
 
-	blog(LOG_INFO, "[obs-shorts-vertical] Plugin loaded — open View → Docks → Shorts");
+	blog(LOG_INFO, "[obs-shorts-vertical] Plugin loaded — open View → Docks → Vertical Shorts");
 	return true;
 }
 
