@@ -1,4 +1,4 @@
-Shorts Vertical for OBS Studio — Windows Install (v1.0.0)
+Shorts Vertical for OBS Studio — Windows Install (v1.0.1)
 =========================================================
 
 Requirements
@@ -6,8 +6,18 @@ Requirements
 - Windows 10/11 64-bit
 - OBS Studio 30 or newer (31+ recommended)
 
-Quick install (recommended)
----------------------------
+One-click install (recommended)
+-------------------------------
+Download and run:
+
+  https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/ShortsVertical-Setup.exe
+
+1. Close OBS Studio completely.
+2. Run ShortsVertical-Setup.exe (no admin required).
+3. Start OBS Studio → View → Docks → Shorts.
+
+Zip install
+-----------
 1. Close OBS Studio completely.
 2. Press Win+R, paste this, and press Enter:
 

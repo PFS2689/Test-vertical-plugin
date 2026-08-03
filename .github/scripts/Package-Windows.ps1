@@ -48,11 +48,12 @@ function Package {
     $ProductVersion = $BuildSpec.version
 
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    $FriendlyName = "ShortsVertical-${ProductVersion}-Windows"
+    $FriendlyZip = "ShortsVertical-${ProductVersion}-Windows"
+    $FriendlySetup = "ShortsVertical-Setup"
+    $VersionedSetup = "ShortsVertical-${ProductVersion}-Windows-Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
 
-    # Add install instructions into the package root for end users
     if (Test-Path "${ProjectRoot}/INSTALL-WINDOWS.txt") {
         Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" "${ReleaseDir}/INSTALL.txt"
     }
@@ -62,22 +63,73 @@ function Package {
         Path = @(
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
             "${ProjectRoot}/release/ShortsVertical-*-Windows.zip"
+            "${ProjectRoot}/release/ShortsVertical-*-Windows-Setup.exe"
+            "${ProjectRoot}/release/ShortsVertical-Setup.exe"
+            "${ProjectRoot}/release/Package"
         )
     }
-
-    Remove-Item @RemoveArgs
+    Remove-Item @RemoveArgs -Recurse
 
     Log-Group "Archiving ${ProductName}..."
     $CompressArgs = @{
-        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${FriendlyName}*.*")
+        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${FriendlyZip}*.*", "*.exe")
         CompressionLevel = 'Optimal'
         DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
+    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${FriendlyZip}.zip"
+    Log-Group
 
-    # Friendly download name for GitHub Releases
-    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${FriendlyName}.zip"
+    # --- One-click Inno Setup installer ---------------------------------
+    $IsccFile = "${ProjectRoot}/build_${Target}/installer-Windows.iss"
+    if ( ! ( Test-Path -Path $IsccFile ) ) {
+        throw "InnoSetup script not found at ${IsccFile}. Build the project first."
+    }
+
+    # Ensure iscc is available (CI installs via choco)
+    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+    if ( -not $iscc ) {
+        $candidates = @(
+            "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            "${Env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe"
+        )
+        foreach ($c in $candidates) {
+            if (Test-Path $c) {
+                $iscc = $c
+                break
+            }
+        }
+    } else {
+        $iscc = $iscc.Source
+    }
+
+    if ( -not $iscc ) {
+        throw "Inno Setup compiler (iscc) not found. Install Inno Setup 6."
+    }
+
+    Log-Group "Creating one-click Windows installer..."
+    Push-Location -Stack BuildTemp
+    Ensure-Location -Path "${ProjectRoot}/release"
+
+    Copy-Item -Path $Configuration -Destination Package -Recurse
+    # Remove top-level INSTALL.txt from Package so DestDir layout stays clean
+    if (Test-Path "Package/INSTALL.txt") {
+        Remove-Item -Force "Package/INSTALL.txt"
+    }
+
+    Invoke-External $iscc $IsccFile "/O${ProjectRoot}/release" "/F${VersionedSetup}"
+
+    Remove-Item -Path Package -Recurse -Force
+    Pop-Location -Stack BuildTemp
+
+    # Stable filename for /releases/latest/download/ShortsVertical-Setup.exe
+    if (Test-Path "${ProjectRoot}/release/${VersionedSetup}.exe") {
+        Copy-Item -Force "${ProjectRoot}/release/${VersionedSetup}.exe" `
+            "${ProjectRoot}/release/${FriendlySetup}.exe"
+    } else {
+        throw "Installer exe was not created: ${VersionedSetup}.exe"
+    }
     Log-Group
 }
 

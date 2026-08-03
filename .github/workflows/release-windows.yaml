@@ -55,7 +55,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # Prefer the friendly zip name for downloads
+          # One-click installer (stable + versioned names)
+          if ls dist/ShortsVertical-Setup.exe >/dev/null 2>&1; then
+            cp dist/ShortsVertical-Setup.exe release-assets/
+          fi
+          if ls dist/ShortsVertical-*-Windows-Setup.exe >/dev/null 2>&1; then
+            cp dist/ShortsVertical-*-Windows-Setup.exe release-assets/
+          fi
           if ls dist/ShortsVertical-*-Windows.zip >/dev/null 2>&1; then
             cp dist/ShortsVertical-*-Windows.zip release-assets/
           fi
@@ -66,13 +72,16 @@ jobs:
           {
             echo "## Shorts Vertical ${{ steps.check.outputs.version }} (Windows)"
             echo
-            echo "Download **ShortsVertical-${{ steps.check.outputs.version }}-Windows.zip**, then follow \`INSTALL.txt\` inside the zip."
+            echo "### One-click install"
             echo
-            echo "### Install (quick)"
+            echo "**[Download ShortsVertical-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/ShortsVertical-Setup.exe)**"
+            echo
             echo "1. Close OBS"
-            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
-            echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
-            echo "4. Start OBS → **View → Docks → Shorts**"
+            echo "2. Run the installer (no admin needed)"
+            echo "3. Start OBS → **View → Docks → Shorts**"
+            echo
+            echo "### Manual zip install"
+            echo "If you prefer a zip: download \`ShortsVertical-${{ steps.check.outputs.version }}-Windows.zip\` and copy \`obs-shorts-vertical\` into \`%APPDATA%\\obs-studio\\plugins\`."
             echo
             echo "### Checksums"
             for f in release-assets/*; do

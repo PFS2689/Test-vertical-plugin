@@ -1,0 +1,56 @@
+#define MyAppName "@CMAKE_PROJECT_NAME@"
+#define MyAppVersion "@CMAKE_PROJECT_VERSION@"
+#define MyAppPublisher "@PLUGIN_AUTHOR@"
+#define MyAppURL "@PLUGIN_WEBSITE@"
+#define MyAppDisplayName "Shorts Vertical"
+
+[Setup]
+; Unique ID for this installer — do not reuse for other apps
+AppId={{@UUID_APP@}
+AppName={#MyAppDisplayName}
+AppVersion={#MyAppVersion}
+AppVerName={#MyAppDisplayName} {#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+; Per-user install — no admin required (one-click friendly)
+DefaultDirName={userappdata}\obs-studio\plugins
+AppendDefaultDirName=no
+DisableDirPage=yes
+DefaultGroupName={#MyAppDisplayName}
+AllowNoIcons=yes
+OutputBaseFilename=ShortsVertical-{#MyAppVersion}-Windows-Setup
+Compression=lzma
+SolidCompression=yes
+DirExistsWarning=no
+PrivilegesRequired=lowest
+WizardStyle=modern
+UninstallDisplayName={#MyAppDisplayName}
+InfoBeforeFile=
+SetupLogging=yes
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+; Package layout: obs-shorts-vertical\bin\64bit\... and data\...
+Source: "..\release\Package\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\INSTALL-WINDOWS.txt"; DestDir: "{app}\{#MyAppName}"; DestName: "INSTALL.txt"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\{cm:ProgramOnTheWeb,{#MyAppDisplayName}}"; Filename: "{#MyAppURL}"
+
+[Code]
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    // no-op: files already in %APPDATA%\obs-studio\plugins\obs-shorts-vertical
+  end;
+end;

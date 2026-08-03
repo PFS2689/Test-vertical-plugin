@@ -1,25 +1,22 @@
 # Shorts Vertical for OBS Studio
 
-**Version 1.0.0** — Windows release
+**Version 1.0.1** — Windows one-click installer
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
-Adds a dedicated 9:16 (or custom) shorts canvas with the same kind of **move and resize** controls you use on the main OBS preview: drag sources to reposition, and use corner/edge handles to scale.
+## One-click install (Windows)
 
-## Download (Windows)
+**[Download & run ShortsVertical-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/ShortsVertical-Setup.exe)**
 
-Grab the latest Windows zip from [Releases](https://github.com/PFS2689/Test-vertical-plugin/releases):
+1. Close OBS Studio  
+2. Run the installer (no admin required)  
+3. Start OBS → **View → Docks → Shorts**
 
-- **`ShortsVertical-1.0.0-Windows.zip`**
+That link always points to the latest Windows installer.
 
-### Install
+## Manual zip install
 
-1. Close OBS Studio.
-2. Press `Win+R`, paste `%APPDATA%\obs-studio\plugins`, press Enter (create the folder if needed).
-3. Copy the `obs-shorts-vertical` folder from the zip into that plugins folder.
-4. Start OBS → **View → Docks → Shorts**.
-
-Full steps are also in `INSTALL.txt` inside the zip.
+[ShortsVertical-1.0.1-Windows.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/ShortsVertical-1.0.1-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
 
 ## Features
 
@@ -40,33 +37,13 @@ Full steps are also in `INSTALL.txt` inside the zip.
 
 ## Build from source
 
-### Dependencies
-
-- CMake 3.28+
-- Visual Studio 2022 (Windows)
-- OBS plugin build dependencies (fetched automatically via `buildspec.json`)
-
-### Windows
-
 ```powershell
 cmake --preset windows-x64
 cmake --build --preset windows-x64
 cmake --install build_x64 --prefix release/RelWithDebInfo --config RelWithDebInfo
 ```
 
-CI builds and publishes the Windows zip when you push a version tag such as `1.0.0`.
-
-## How to use
-
-1. Open the **Shorts** dock.
-2. Pick a canvas size (default 1080×1920).
-3. Click **Add Camera** (or **Add Source** to reuse something from your main scenes).
-4. In the preview:
-   - **Click** a source to select it
-   - **Drag** to move it
-   - Drag a **corner or edge handle** to resize
-5. Fine-tune with the Transform fields, or use Fit / Stretch / Center.
-6. Hit **Record** to capture only the vertical canvas.
+CI builds the Windows zip + Setup.exe when you push a version tag (for example `1.0.1`).
 
 ## License
 
