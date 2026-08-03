@@ -55,32 +55,38 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
+          # Manual zip (primary non one-click download)
+          if ls dist/Vertical-Shorts-Plugin.zip >/dev/null 2>&1; then
+            cp dist/Vertical-Shorts-Plugin.zip release-assets/
+          fi
+          if ls dist/Vertical-Shorts-Plugin-*.zip >/dev/null 2>&1; then
+            cp dist/Vertical-Shorts-Plugin-*.zip release-assets/ 2>/dev/null || true
+          fi
           if ls dist/VerticalShortsPlugin-Setup.exe >/dev/null 2>&1; then
             cp dist/VerticalShortsPlugin-Setup.exe release-assets/
           fi
           if ls dist/VerticalShortsPlugin-*-Windows-Setup.exe >/dev/null 2>&1; then
             cp dist/VerticalShortsPlugin-*-Windows-Setup.exe release-assets/
           fi
-          if ls dist/VerticalShortsPlugin-*-Windows.zip >/dev/null 2>&1; then
-            cp dist/VerticalShortsPlugin-*-Windows.zip release-assets/
-          fi
           if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
             cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
           fi
+          # de-dupe if glob copied Vertical-Shorts-Plugin.zip twice
           ls -la release-assets
           {
             echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
             echo
-            echo "### One-click install"
+            echo "### Manual install (zip)"
             echo
-            echo "**[Download VerticalShortsPlugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/VerticalShortsPlugin-Setup.exe)**"
+            echo "**[Download Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)**"
             echo
             echo "1. Close OBS"
-            echo "2. Run the installer (no admin needed)"
-            echo "3. Start OBS → **View → Docks → Shorts**"
+            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
+            echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
-            echo "### Manual zip install"
-            echo "If you prefer a zip: download \`VerticalShortsPlugin-${{ steps.check.outputs.version }}-Windows.zip\` and copy \`obs-shorts-vertical\` into \`%APPDATA%\\obs-studio\\plugins\`."
+            echo "### One-click install (optional)"
+            echo "**[VerticalShortsPlugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/VerticalShortsPlugin-Setup.exe)**"
             echo
             echo "### Checksums"
             for f in release-assets/*; do

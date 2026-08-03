@@ -48,7 +48,9 @@ function Package {
     $ProductVersion = $BuildSpec.version
 
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    $FriendlyZip = "VerticalShortsPlugin-${ProductVersion}-Windows"
+    # Manual (non one-click) zip downloads — Vertical Shorts Plugin naming
+    $ManualZipVersioned = "Vertical-Shorts-Plugin-${ProductVersion}"
+    $ManualZipStable = "Vertical-Shorts-Plugin"
     $FriendlySetup = "VerticalShortsPlugin-Setup"
     $VersionedSetup = "VerticalShortsPlugin-${ProductVersion}-Windows-Setup"
 
@@ -62,24 +64,25 @@ function Package {
         ErrorAction = 'SilentlyContinue'
         Path = @(
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
-            "${ProjectRoot}/release/VerticalShortsPlugin-*-Windows.zip"
-            "${ProjectRoot}/release/VerticalShortsPlugin-*-Windows-Setup.exe"
-            "${ProjectRoot}/release/VerticalShortsPlugin-Setup.exe"
+            "${ProjectRoot}/release/Vertical-Shorts-Plugin*.zip"
+            "${ProjectRoot}/release/VerticalShortsPlugin-*"
             "${ProjectRoot}/release/ShortsVertical-*"
             "${ProjectRoot}/release/Package"
         )
     }
     Remove-Item @RemoveArgs -Recurse
 
-    Log-Group "Archiving ${ProductName}..."
+    Log-Group "Archiving ${ProductName} (manual zip install)..."
     $CompressArgs = @{
-        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${FriendlyZip}*.*", "*.exe")
+        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${ManualZipVersioned}*.*", "${ManualZipStable}*.*", "*.exe")
         CompressionLevel = 'Optimal'
         DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
-    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${FriendlyZip}.zip"
+    # Versioned + stable names for /releases/latest/download/Vertical-Shorts-Plugin.zip
+    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipVersioned}.zip"
+    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipStable}.zip"
     Log-Group
 
     $IsccFile = "${ProjectRoot}/build_${Target}/installer-Windows.iss"

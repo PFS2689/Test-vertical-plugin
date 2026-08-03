@@ -1,22 +1,21 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.0.0** — Windows one-click installer
+**Version 1.0.1** — Windows
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
-## One-click install (Windows)
+## Manual install (zip)
 
-**[Download & run VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
+**[Download Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/Vertical-Shorts-Plugin.zip)**
 
 1. Close OBS Studio  
-2. Run the installer (no admin required)  
-3. Start OBS → **View → Docks → Shorts**
+2. Open `%APPDATA%\obs-studio\plugins`  
+3. Copy the `obs-shorts-vertical` folder from the zip into that folder  
+4. Start OBS → **View → Docks → Vertical Shorts**
 
-That link always points to the latest Windows installer.
+## One-click install (optional)
 
-## Manual zip install
-
-[VerticalShortsPlugin-1.0.0-Windows.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-1.0.0-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
+**[VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
 
 ## Features
 
@@ -42,8 +41,6 @@ cmake --preset windows-x64
 cmake --build --preset windows-x64
 cmake --install build_x64 --prefix release/RelWithDebInfo --config RelWithDebInfo
 ```
-
-CI builds the Windows zip + Setup.exe when you push a version tag (for example `1.0.0`).
 
 ## License
 
