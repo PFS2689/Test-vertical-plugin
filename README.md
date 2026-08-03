@@ -6,7 +6,7 @@ Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTu
 
 ## One-click install (Windows)
 
-**[Download & run VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/vertical-shorts-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
+**[Download & run VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
 
 1. Close OBS Studio  
 2. Run the installer (no admin required)  
@@ -16,7 +16,7 @@ That link always points to the latest Windows installer.
 
 ## Manual zip install
 
-[VerticalShortsPlugin-1.0.0-Windows.zip](https://github.com/PFS2689/vertical-shorts-plugin/releases/latest/download/VerticalShortsPlugin-1.0.0-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
+[VerticalShortsPlugin-1.0.0-Windows.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-1.0.0-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
 
 ## Features
 
