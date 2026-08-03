@@ -16,7 +16,7 @@ MODULE_EXPORT const char *obs_module_description(void)
 
 MODULE_EXPORT const char *obs_module_name(void)
 {
-	return "Shorts Vertical";
+	return "Vertical Shorts Plugin";
 }
 
 static ShortsDock *g_dock = nullptr;
@@ -41,7 +41,7 @@ static void SaveCallback(obs_data_t *save_data, bool saving, void *)
 
 bool obs_module_load(void)
 {
-	blog(LOG_INFO, "[obs-shorts-vertical] Loading Shorts Vertical plugin");
+	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin");
 
 	QMainWindow *main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	g_dock = new ShortsDock(main);

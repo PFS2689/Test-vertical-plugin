@@ -1,12 +1,12 @@
-# Shorts Vertical for OBS Studio
+# Vertical Shorts Plugin for OBS Studio
 
-**Version 1.0.1** — Windows one-click installer
+**Version 1.0.2** — Windows one-click installer
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
 ## One-click install (Windows)
 
-**[Download & run ShortsVertical-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/ShortsVertical-Setup.exe)**
+**[Download & run VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
 
 1. Close OBS Studio  
 2. Run the installer (no admin required)  
@@ -16,7 +16,7 @@ That link always points to the latest Windows installer.
 
 ## Manual zip install
 
-[ShortsVertical-1.0.1-Windows.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/ShortsVertical-1.0.1-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
+[VerticalShortsPlugin-1.0.2-Windows.zip](https://github.com/PFS2689/Test-vertical-plugin/releases/latest/download/VerticalShortsPlugin-1.0.2-Windows.zip) — copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`.
 
 ## Features
 
@@ -43,7 +43,7 @@ cmake --build --preset windows-x64
 cmake --install build_x64 --prefix release/RelWithDebInfo --config RelWithDebInfo
 ```
 
-CI builds the Windows zip + Setup.exe when you push a version tag (for example `1.0.1`).
+CI builds the Windows zip + Setup.exe when you push a version tag (for example `1.0.2`).
 
 ## License
 

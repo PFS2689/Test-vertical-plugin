@@ -2,7 +2,7 @@
 #define MyAppVersion "@CMAKE_PROJECT_VERSION@"
 #define MyAppPublisher "@PLUGIN_AUTHOR@"
 #define MyAppURL "@PLUGIN_WEBSITE@"
-#define MyAppDisplayName "Shorts Vertical"
+#define MyAppDisplayName "Vertical Shorts Plugin"
 
 [Setup]
 ; Unique ID for this installer — do not reuse for other apps
@@ -20,7 +20,7 @@ AppendDefaultDirName=no
 DisableDirPage=yes
 DefaultGroupName={#MyAppDisplayName}
 AllowNoIcons=yes
-OutputBaseFilename=ShortsVertical-{#MyAppVersion}-Windows-Setup
+OutputBaseFilename=VerticalShortsPlugin-{#MyAppVersion}-Windows-Setup
 Compression=lzma
 SolidCompression=yes
 DirExistsWarning=no

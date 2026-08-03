@@ -48,9 +48,9 @@ function Package {
     $ProductVersion = $BuildSpec.version
 
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    $FriendlyZip = "ShortsVertical-${ProductVersion}-Windows"
-    $FriendlySetup = "ShortsVertical-Setup"
-    $VersionedSetup = "ShortsVertical-${ProductVersion}-Windows-Setup"
+    $FriendlyZip = "VerticalShortsPlugin-${ProductVersion}-Windows"
+    $FriendlySetup = "VerticalShortsPlugin-Setup"
+    $VersionedSetup = "VerticalShortsPlugin-${ProductVersion}-Windows-Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
 
@@ -62,9 +62,10 @@ function Package {
         ErrorAction = 'SilentlyContinue'
         Path = @(
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
-            "${ProjectRoot}/release/ShortsVertical-*-Windows.zip"
-            "${ProjectRoot}/release/ShortsVertical-*-Windows-Setup.exe"
-            "${ProjectRoot}/release/ShortsVertical-Setup.exe"
+            "${ProjectRoot}/release/VerticalShortsPlugin-*-Windows.zip"
+            "${ProjectRoot}/release/VerticalShortsPlugin-*-Windows-Setup.exe"
+            "${ProjectRoot}/release/VerticalShortsPlugin-Setup.exe"
+            "${ProjectRoot}/release/ShortsVertical-*"
             "${ProjectRoot}/release/Package"
         )
     }
@@ -81,13 +82,11 @@ function Package {
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${FriendlyZip}.zip"
     Log-Group
 
-    # --- One-click Inno Setup installer ---------------------------------
     $IsccFile = "${ProjectRoot}/build_${Target}/installer-Windows.iss"
     if ( ! ( Test-Path -Path $IsccFile ) ) {
         throw "InnoSetup script not found at ${IsccFile}. Build the project first."
     }
 
-    # Ensure iscc is available (CI installs via choco)
     $iscc = Get-Command iscc -ErrorAction SilentlyContinue
     if ( -not $iscc ) {
         $candidates = @(
@@ -113,7 +112,6 @@ function Package {
     Ensure-Location -Path "${ProjectRoot}/release"
 
     Copy-Item -Path $Configuration -Destination Package -Recurse
-    # Remove top-level INSTALL.txt from Package so DestDir layout stays clean
     if (Test-Path "Package/INSTALL.txt") {
         Remove-Item -Force "Package/INSTALL.txt"
     }
@@ -123,7 +121,7 @@ function Package {
     Remove-Item -Path Package -Recurse -Force
     Pop-Location -Stack BuildTemp
 
-    # Stable filename for /releases/latest/download/ShortsVertical-Setup.exe
+    # Stable filename for /releases/latest/download/VerticalShortsPlugin-Setup.exe
     if (Test-Path "${ProjectRoot}/release/${VersionedSetup}.exe") {
         Copy-Item -Force "${ProjectRoot}/release/${VersionedSetup}.exe" `
             "${ProjectRoot}/release/${FriendlySetup}.exe"

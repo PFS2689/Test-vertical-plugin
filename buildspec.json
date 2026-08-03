@@ -32,14 +32,14 @@
         }
     },
     "name": "obs-shorts-vertical",
-    "displayName": "Shorts Vertical",
-    "version": "1.0.1",
-    "author": "Shorts Vertical Contributors",
+    "displayName": "Vertical Shorts Plugin",
+    "version": "1.0.2",
+    "author": "Vertical Shorts Plugin Contributors",
     "website": "https://github.com/PFS2689/Test-vertical-plugin",
     "email": "noreply@example.com",
     "platformConfig": {
         "macos": {
-            "bundleId": "com.shortsvertical.obs-shorts-vertical"
+            "bundleId": "com.verticalshorts.obs-shorts-vertical"
         }
     },
     "uuids": {

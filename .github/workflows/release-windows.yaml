@@ -55,33 +55,32 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # One-click installer (stable + versioned names)
-          if ls dist/ShortsVertical-Setup.exe >/dev/null 2>&1; then
-            cp dist/ShortsVertical-Setup.exe release-assets/
+          if ls dist/VerticalShortsPlugin-Setup.exe >/dev/null 2>&1; then
+            cp dist/VerticalShortsPlugin-Setup.exe release-assets/
           fi
-          if ls dist/ShortsVertical-*-Windows-Setup.exe >/dev/null 2>&1; then
-            cp dist/ShortsVertical-*-Windows-Setup.exe release-assets/
+          if ls dist/VerticalShortsPlugin-*-Windows-Setup.exe >/dev/null 2>&1; then
+            cp dist/VerticalShortsPlugin-*-Windows-Setup.exe release-assets/
           fi
-          if ls dist/ShortsVertical-*-Windows.zip >/dev/null 2>&1; then
-            cp dist/ShortsVertical-*-Windows.zip release-assets/
+          if ls dist/VerticalShortsPlugin-*-Windows.zip >/dev/null 2>&1; then
+            cp dist/VerticalShortsPlugin-*-Windows.zip release-assets/
           fi
           if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
             cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
           fi
           ls -la release-assets
           {
-            echo "## Shorts Vertical ${{ steps.check.outputs.version }} (Windows)"
+            echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
             echo
             echo "### One-click install"
             echo
-            echo "**[Download ShortsVertical-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/ShortsVertical-Setup.exe)**"
+            echo "**[Download VerticalShortsPlugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/VerticalShortsPlugin-Setup.exe)**"
             echo
             echo "1. Close OBS"
             echo "2. Run the installer (no admin needed)"
             echo "3. Start OBS → **View → Docks → Shorts**"
             echo
             echo "### Manual zip install"
-            echo "If you prefer a zip: download \`ShortsVertical-${{ steps.check.outputs.version }}-Windows.zip\` and copy \`obs-shorts-vertical\` into \`%APPDATA%\\obs-studio\\plugins\`."
+            echo "If you prefer a zip: download \`VerticalShortsPlugin-${{ steps.check.outputs.version }}-Windows.zip\` and copy \`obs-shorts-vertical\` into \`%APPDATA%\\obs-studio\\plugins\`."
             echo
             echo "### Checksums"
             for f in release-assets/*; do
@@ -95,7 +94,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.check.outputs.version }}
-          name: Shorts Vertical ${{ steps.check.outputs.version }}
+          name: Vertical Shorts Plugin ${{ steps.check.outputs.version }}
           body_path: RELEASE_BODY.md
           draft: false
           prerelease: ${{ steps.check.outputs.prerelease == 'true' }}
