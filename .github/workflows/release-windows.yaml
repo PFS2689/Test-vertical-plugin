@@ -1,0 +1,94 @@
+name: Release Windows
+run-name: Windows release ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build-windows.yaml
+    secrets: inherit
+
+  release:
+    name: Publish Windows Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate tag
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s extglob
+          case "${GITHUB_REF_NAME}" in
+            +([0-9]).+([0-9]).+([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+            +([0-9]).+([0-9]).+([0-9])-@(beta|rc)*([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "valid=false" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        if: steps.check.outputs.valid == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Prepare release assets
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # Prefer the friendly zip name for downloads
+          if ls dist/ShortsVertical-*-Windows.zip >/dev/null 2>&1; then
+            cp dist/ShortsVertical-*-Windows.zip release-assets/
+          fi
+          if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
+            cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
+          fi
+          ls -la release-assets
+          {
+            echo "## Shorts Vertical ${{ steps.check.outputs.version }} (Windows)"
+            echo
+            echo "Download **ShortsVertical-${{ steps.check.outputs.version }}-Windows.zip**, then follow \`INSTALL.txt\` inside the zip."
+            echo
+            echo "### Install (quick)"
+            echo "1. Close OBS"
+            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
+            echo "4. Start OBS → **View → Docks → Shorts**"
+            echo
+            echo "### Checksums"
+            for f in release-assets/*; do
+              echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
+            done
+          } > RELEASE_BODY.md
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.valid == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check.outputs.version }}
+          name: Shorts Vertical ${{ steps.check.outputs.version }}
+          body_path: RELEASE_BODY.md
+          draft: false
+          prerelease: ${{ steps.check.outputs.prerelease == 'true' }}
+          files: release-assets/*
+          fail_on_unmatched_files: true

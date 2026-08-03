@@ -2,8 +2,9 @@
 .vscode/
 .idea/
 build/
-build*/
-out/
+build_*/
+.deps/
+release/
 cmake-build-*/
 *.user
 *.suo
@@ -20,3 +21,4 @@ version.h
 CMakeCache.txt
 CMakeFiles/
 compile_commands.json
+.ccache/
