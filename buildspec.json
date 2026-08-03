@@ -36,7 +36,12 @@
     "version": "1.0.0",
     "author": "Shorts Vertical Contributors",
     "website": "https://github.com/PFS2689/Test-vertical-plugin",
-    "email": "",
+    "email": "noreply@example.com",
+    "platformConfig": {
+        "macos": {
+            "bundleId": "com.shortsvertical.obs-shorts-vertical"
+        }
+    },
     "uuids": {
         "windowsApp": "D4336EAC-D873-4E6B-8575-07096987E0C8"
     }
