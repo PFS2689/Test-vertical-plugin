@@ -24,6 +24,7 @@ Includes:
 - Optional recording automation and hotkeys
 - Custom per-user Setup.exe (no Inno Setup / NSIS)
 - MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
+- Authenticode signing required for tag releases (Azure Artifact Signing or OV/EV PFX)
 
 ---
 
