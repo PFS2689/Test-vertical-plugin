@@ -166,12 +166,14 @@ function Package {
     $ProductVersion = $BuildSpec.version
     $DisplayName = if ($BuildSpec.displayName) { [string]$BuildSpec.displayName } else { 'Vertical Shorts Plugin' }
 
-    # Official public artifact basenames (no extension):
-    #   Vertical Shorts Plugin 1.0.5.zip
-    #   Vertical Shorts Plugin 1.0.5 Setup.exe
+    # Official public artifact basenames (no extension).
+    # GitHub Release asset names cannot contain spaces (they become "."),
+    # so ship hyphenated versioned names that GitHub preserves exactly:
+    #   Vertical-Shorts-Plugin-1.0.5.zip
+    #   Vertical-Shorts-Plugin-1.0.5-Setup.exe
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    $OfficialZipBase = "${DisplayName} ${ProductVersion}"
-    $SetupName = "${DisplayName} ${ProductVersion} Setup"
+    $OfficialZipBase = "Vertical-Shorts-Plugin-${ProductVersion}"
+    $SetupName = "Vertical-Shorts-Plugin-${ProductVersion}-Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
 
@@ -188,6 +190,7 @@ function Package {
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
             "${ProjectRoot}/release/Vertical-Shorts-Plugin*.zip"
             "${ProjectRoot}/release/Vertical-Shorts-Plugin-Setup.exe"
+            "${ProjectRoot}/release/Vertical-Shorts-Plugin-*-Setup.exe"
             "${ProjectRoot}/release/Vertical Shorts Plugin*.zip"
             "${ProjectRoot}/release/Vertical Shorts Plugin*Setup.exe"
             "${ProjectRoot}/release/VerticalShortsPlugin-*"
@@ -206,7 +209,7 @@ function Package {
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
-    # Official public zip name (spaces, versioned)
+    # Official public zip name (hyphenated, versioned)
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${OfficialZipBase}.zip"
     Log-Group
 

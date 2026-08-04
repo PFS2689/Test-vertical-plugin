@@ -4,10 +4,10 @@ Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.5)
 Downloads (ClamAV-scanned before each GitHub release is published):
 
   Setup.exe (recommended):
-    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical%20Shorts%20Plugin%201.0.5%20Setup.exe
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5-Setup.exe
 
   Manual zip:
-    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical%20Shorts%20Plugin%201.0.5.zip
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5.zip
 
   Checksums:
     https://github.com/PFS2689/verticalshorts/releases/latest/download/SHA256SUMS.txt
@@ -32,7 +32,7 @@ Requirements
 Install with Setup.exe (recommended)
 ------------------------------------
 1. Close OBS Studio completely.
-2. Run "Vertical Shorts Plugin 1.0.5 Setup.exe" and click OK.
+2. Run Vertical-Shorts-Plugin-1.0.5-Setup.exe and click OK.
 3. Start OBS Studio.
 4. Open View → Docks → Vertical Shorts.
 5. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.

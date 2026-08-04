@@ -79,10 +79,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          SETUP_NAME="Vertical Shorts Plugin ${VERSION} Setup.exe"
-          ZIP_NAME="Vertical Shorts Plugin ${VERSION}.zip"
+          # GitHub Release asset names cannot contain spaces (they become ".").
+          # Official shipping names are hyphenated and versioned.
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
 
-          # Prefer official spaced names from packaging; fall back to legacy hyphenated names.
           if [[ -f "dist/${SETUP_NAME}" ]]; then
             cp "dist/${SETUP_NAME}" "release-assets/${SETUP_NAME}"
           elif [[ -f dist/Vertical-Shorts-Plugin-Setup.exe ]]; then
@@ -152,8 +153,8 @@ jobs:
           VERSION: ${{ steps.check.outputs.version }}
         run: |
           set -euo pipefail
-          SETUP_NAME="Vertical Shorts Plugin ${VERSION} Setup.exe"
-          ZIP_NAME="Vertical Shorts Plugin ${VERSION}.zip"
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
 
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
@@ -197,10 +198,8 @@ jobs:
           VERSION: ${{ steps.check.outputs.version }}
         run: |
           set -euo pipefail
-          SETUP_NAME="Vertical Shorts Plugin ${VERSION} Setup.exe"
-          ZIP_NAME="Vertical Shorts Plugin ${VERSION}.zip"
-          SETUP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${SETUP_NAME}")
-          ZIP_ENC=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "${ZIP_NAME}")
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
           {
             echo "## Vertical Shorts Plugin ${VERSION} (Windows)"
             echo
@@ -208,8 +207,8 @@ jobs:
             echo
             echo "### Download"
             echo
-            echo "- **Setup.exe (recommended):** [${SETUP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${SETUP_ENC})"
-            echo "- **Manual ZIP:** [${ZIP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${ZIP_ENC})"
+            echo "- **Setup.exe (recommended):** [${SETUP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${SETUP_NAME})"
+            echo "- **Manual ZIP:** [${ZIP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${ZIP_NAME})"
             echo "- **Checksums:** [SHA256SUMS.txt](https://github.com/${{ github.repository }}/releases/latest/download/SHA256SUMS.txt)"
             echo
             echo "### Install (Setup.exe)"

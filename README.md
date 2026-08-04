@@ -6,8 +6,8 @@ Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTo
 
 ## Download
 
-- **Setup.exe:** [Vertical Shorts Plugin 1.0.5 Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical%20Shorts%20Plugin%201.0.5%20Setup.exe)
-- **Zip:** [Vertical Shorts Plugin 1.0.5.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical%20Shorts%20Plugin%201.0.5.zip)
+- **Setup.exe:** [Vertical-Shorts-Plugin-1.0.5-Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5-Setup.exe)
+- **Zip:** [Vertical-Shorts-Plugin-1.0.5.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5.zip)
 - **Checksums:** [SHA256SUMS.txt](https://github.com/PFS2689/verticalshorts/releases/latest/download/SHA256SUMS.txt)
 
 ## UI overview

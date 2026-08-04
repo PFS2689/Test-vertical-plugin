@@ -55,5 +55,5 @@ jobs:
           name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-${{ steps.setup.outputs.commitHash }}
           path: |
             ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.zip
-            ${{ github.workspace }}/release/Vertical Shorts Plugin ${{ steps.setup.outputs.pluginVersion }}.zip
-            ${{ github.workspace }}/release/Vertical Shorts Plugin ${{ steps.setup.outputs.pluginVersion }} Setup.exe
+            ${{ github.workspace }}/release/Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}.zip
+            ${{ github.workspace }}/release/Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}-Setup.exe
