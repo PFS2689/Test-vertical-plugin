@@ -1415,6 +1415,20 @@ void ShortsDock::OnAutomationNotify(const QString &title, const QString &message
 	QMessageBox::information(this, title, message);
 }
 
+void ShortsDock::OnBufferStatus(BufferStatus, const QString &)
+{
+}
+
+void ShortsDock::EnsureBufferIfConfigured()
+{
+	if (!outputs || clearing || shuttingDown)
+		return;
+	if (!settings.clipBufferEnabled || !settings.autoStartClipBuffer)
+		return;
+	QString err;
+	outputs->EnsureClipBuffer(&err);
+}
+
 void ShortsDock::SaveSettings(obs_data_t *data)
 {
 	/* Persist secrets to OS credential store; settings blob never contains keys. */
