@@ -1,6 +1,6 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.4.0** — Windows
+**Version 1.0.5** — Windows
 
 Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTok, Reels, and Twitch vertical.
 

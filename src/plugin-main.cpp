@@ -1,4 +1,5 @@
 #include "shorts-dock.hpp"
+#include "plugin-support.h"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -13,7 +14,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-shorts-vertical", "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-	return "Vertical Shorts production dock with vertical canvas, streaming, recording, short/long clips, and automation";
+	return "Vertical Shorts Plugin — vertical canvas, streaming, recording, short/long clips, and automation";
 }
 
 MODULE_EXPORT const char *obs_module_name(void)
@@ -102,7 +103,7 @@ static void FrontendEvent(enum obs_frontend_event event, void *)
 
 bool obs_module_load(void)
 {
-	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin");
+	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin %s", PLUGIN_VERSION);
 
 	/* Defer dock creation until the UI/video pipeline is ready. */
 	obs_frontend_add_event_callback(FrontendEvent, nullptr);

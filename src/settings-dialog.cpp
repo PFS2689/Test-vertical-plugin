@@ -2,6 +2,7 @@
 #include "credential-store.hpp"
 #include "platform-logo.hpp"
 #include "platform-selector.hpp"
+#include "plugin-support.h"
 
 #include <algorithm>
 #include <QDesktopServices>
@@ -552,6 +553,13 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 void SettingsDialog::BuildAdvancedTab(QWidget *tab)
 {
 	auto *lay = new QVBoxLayout(tab);
+	auto *version = new QLabel(QString::fromUtf8(obs_module_text("PluginVersionLabel")), tab);
+	if (version->text().isEmpty() || version->text() == QStringLiteral("PluginVersionLabel"))
+		version->setText(QStringLiteral("Vertical Shorts Plugin %1").arg(QString::fromUtf8(PLUGIN_VERSION)));
+	QFont vf = version->font();
+	vf.setBold(true);
+	version->setFont(vf);
+	lay->addWidget(version);
 	auto *label = new QLabel(QString::fromUtf8(obs_module_text("AdvancedHelp")), tab);
 	label->setWordWrap(true);
 	lay->addWidget(label);

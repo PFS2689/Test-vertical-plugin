@@ -2,7 +2,7 @@
 
 **Audit date:** 2026-08-04  
 **Branch:** `cursor/independent-stream-dest-11e0`  
-**Plugin version:** 1.4.0  
+**Plugin version:** 1.0.5  
 
 This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Setup.exe, packaging scripts, resources, and credential handling.  
 **No antivirus bypass, Defender exclusions, packers, or obfuscation were added.**
