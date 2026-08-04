@@ -77,6 +77,12 @@ function Build {
     Invoke-External cmake --build "build_${Target}" --config $Configuration --target vsp_tests
 
     Log-Group "Running ctest..."
+    $QtBin = Get-ChildItem -Path "$ProjectRoot/.deps" -Directory -Filter "obs-deps-qt6-*-${Target}" |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($QtBin) {
+        $env:PATH = "$(Join-Path $QtBin 'bin');$env:PATH"
+        Write-Information "Added Qt bin to PATH: $(Join-Path $QtBin 'bin')"
+    }
     Push-Location "build_${Target}"
     Invoke-External ctest -C $Configuration --output-on-failure --timeout 120
     Pop-Location
