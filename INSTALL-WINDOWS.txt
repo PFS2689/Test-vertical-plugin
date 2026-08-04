@@ -1,0 +1,94 @@
+Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.5)
+===============================================================
+
+Professional Vertical Streaming Plugin for OBS Studio.
+
+Downloads (ClamAV + Windows Defender scanned before each GitHub release is published):
+
+  Setup.exe (recommended):
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5-Setup.exe
+
+  Manual zip:
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5.zip
+
+  Checksums:
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/SHA256SUMS.txt
+
+About the Setup.exe
+-------------------
+This is a small custom MSVC installer (not Inno Setup). It only copies the
+plugin files into the OBS third-party plugins folder that OBS actually loads:
+
+  %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
+
+Administrator rights (UAC) are required because ProgramData is machine-wide.
+OBS Studio does NOT load plugins from %APPDATA%\obs-studio\plugins on Windows.
+
+Authenticode:
+  When signing credentials are configured in CI, production releases are
+  Authenticode-signed. Verify with:
+    Get-AuthenticodeSignature "Vertical-Shorts-Plugin-1.0.5-Setup.exe"
+  Status should be Valid when signed.
+
+Do NOT disable Windows Defender.
+
+Requirements
+------------
+- Windows 10/11 64-bit
+- OBS Studio 32.2.1 (built and tested against 32.2.1)
+
+Install with Setup.exe (recommended)
+------------------------------------
+1. Close OBS Studio completely.
+2. Run Vertical-Shorts-Plugin-1.0.5-Setup.exe, approve UAC, and click OK.
+3. Start OBS Studio.
+4. If OBS shows Tools → Plugin Manager, ensure "Vertical Shorts Plugin" is enabled,
+   then restart OBS if you just enabled it.
+5. Open View → Docks → Vertical Shorts
+   (also Tools → Vertical Shorts).
+6. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.
+7. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+8. Confirm output files save to the selected vertical recording path.
+
+Install from zip
+----------------
+1. Close OBS Studio completely.
+2. Press Win+R, paste this, and press Enter:
+
+   %ProgramData%\obs-studio\plugins
+
+3. If the "plugins" folder does not exist, create it.
+4. Copy the entire "obs-shorts-vertical" folder from this zip into that plugins folder.
+
+   Final path must be:
+
+   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
+   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\data\locale\en-US.ini
+
+   Do NOT install under %APPDATA%\obs-studio\plugins — OBS will not load it.
+
+5. Start OBS Studio.
+6. Enable the plugin in Tools → Plugin Manager if needed, then restart OBS.
+7. Open View → Docks → Vertical Shorts.
+8. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.
+9. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+
+If the dock does not appear
+---------------------------
+1. Confirm the DLL path above exists.
+2. Open Help → Log Files → Current Log and search for "obs-shorts-vertical".
+   You should see "Loading Vertical Shorts Plugin" and "Dock registered".
+3. Check Tools → Plugin Manager — the plugin must be Enabled.
+4. Remove any leftover copy under %APPDATA%\obs-studio\plugins\obs-shorts-vertical.
+
+Uninstall
+---------
+Delete:
+
+  %ProgramData%\obs-studio\plugins\obs-shorts-vertical
+
+Then restart OBS.
+
+Source
+------
+https://github.com/PFS2689/verticalshorts
