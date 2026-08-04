@@ -57,7 +57,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 | M3 | `MaskSecret` defaults to **full** mask; optional keepTail retained for tests |
 | M5 | Stream start errors sanitized via `SanitizeUserFacingError` before UI display |
 | Path/filename | Stronger `SanitizeFilenamePart`; `ValidateRecordingPath`; outputs resolved under cleaned absolute recording directory |
-| M6/M7 | Release workflow: **fail if freshclam fails**; zip path allowlist + reject `test_*`; emit `SHA256SUMS` + attach `clamav-report.txt`; tag must match `buildspec.json` version |
+| M6/M7 | Release workflow: **fail if freshclam fails**; zip path allowlist + reject `test_*`; emit `SHA256SUMS.txt`; tag (`vX.Y.Z`) must match `buildspec.json` version; publish only Setup.exe + zip + checksums |
 
 ---
 

@@ -141,7 +141,7 @@ exit /b %ERRORLEVEL%
     Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
     Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.obj' -ErrorAction SilentlyContinue | Remove-Item -Force
     Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.pdb' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like 'Vertical-Shorts-Plugin-Setup*' } |
+        Where-Object { $_.Name -like '*Setup*.pdb' -or $_.Name -like 'Vertical*' } |
         Remove-Item -Force -ErrorAction SilentlyContinue
     Log-Group
 }
@@ -164,11 +164,14 @@ function Package {
     $BuildSpec = Get-Content -Path ${BuildSpecFile} -Raw | ConvertFrom-Json
     $ProductName = $BuildSpec.name
     $ProductVersion = $BuildSpec.version
+    $DisplayName = if ($BuildSpec.displayName) { [string]$BuildSpec.displayName } else { 'Vertical Shorts Plugin' }
 
+    # Official public artifact basenames (no extension):
+    #   Vertical Shorts Plugin 1.0.5.zip
+    #   Vertical Shorts Plugin 1.0.5 Setup.exe
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    $ManualZipVersioned = "Vertical-Shorts-Plugin-${ProductVersion}"
-    $ManualZipStable = "Vertical-Shorts-Plugin"
-    $SetupName = "Vertical-Shorts-Plugin-Setup"
+    $OfficialZipBase = "${DisplayName} ${ProductVersion}"
+    $SetupName = "${DisplayName} ${ProductVersion} Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
 
@@ -185,6 +188,8 @@ function Package {
             "${ProjectRoot}/release/${ProductName}-*-windows-*.zip"
             "${ProjectRoot}/release/Vertical-Shorts-Plugin*.zip"
             "${ProjectRoot}/release/Vertical-Shorts-Plugin-Setup.exe"
+            "${ProjectRoot}/release/Vertical Shorts Plugin*.zip"
+            "${ProjectRoot}/release/Vertical Shorts Plugin*Setup.exe"
             "${ProjectRoot}/release/VerticalShortsPlugin-*"
             "${ProjectRoot}/release/ShortsVertical-*"
             "${ProjectRoot}/release/Package"
@@ -193,16 +198,16 @@ function Package {
     }
     Remove-Item @RemoveArgs -Recurse
 
-    Log-Group "Archiving ${ProductName} zip package..."
+    Log-Group "Archiving ${DisplayName} zip package..."
     $CompressArgs = @{
-        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${ManualZipVersioned}*.*", "${ManualZipStable}*.*", "*.exe")
+        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${OfficialZipBase}*.*", "*.exe")
         CompressionLevel = 'Optimal'
         DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
-    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipVersioned}.zip"
-    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipStable}.zip"
+    # Official public zip name (spaces, versioned)
+    Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${OfficialZipBase}.zip"
     Log-Group
 
     Build-CleanSetupExe -ProjectRoot $ProjectRoot -ReleaseDir $ReleaseDir -ProductVersion $ProductVersion -SetupName $SetupName
