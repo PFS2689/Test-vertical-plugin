@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QStringList>
 #include <iostream>
 
 static int failures = 0;
@@ -45,8 +46,22 @@ int main()
 		expect(vsp::PlatformIconResource(p).endsWith(QStringLiteral(".png")), "platform icon is png");
 	}
 
-	/* Bundled logo assets on disk (release package check helper) */
-	const QString iconDir = QStringLiteral("data/icons");
+	/* Bundled logo assets on disk (release package check helper).
+	 * Resolve relative to common locations because ctest may run from the build dir. */
+	QStringList iconRoots;
+#ifdef VSP_SOURCE_DIR
+	iconRoots << QDir(QStringLiteral(VSP_SOURCE_DIR)).filePath(QStringLiteral("data/icons"));
+#endif
+	iconRoots << QStringLiteral("data/icons") << QStringLiteral("../data/icons")
+		  << QStringLiteral("../../data/icons");
+	QString iconDir;
+	for (const QString &root : iconRoots) {
+		if (QFile::exists(QDir(root).filePath(QStringLiteral("youtube.png")))) {
+			iconDir = root;
+			break;
+		}
+	}
+	expect(!iconDir.isEmpty(), "found bundled icon directory");
 	const char *names[] = {"youtube.png", "twitch.png", "tiktok.png", "instagram.png", "custom-rtmp.png",
 			       "youtube.svg", "twitch.svg", "tiktok.svg", "instagram.svg", "custom-rtmp.svg"};
 	for (const char *n : names) {
