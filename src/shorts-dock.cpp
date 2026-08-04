@@ -190,15 +190,23 @@ void DrawSquareAtPos(float x, float y, float radius)
 ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 {
 	setObjectName("ShortsDock");
+	setMinimumWidth(280);
+	setMinimumHeight(400);
+
 	BuildUI();
+
+	/* View/scene setup can fail if video is not ready yet — keep the dock usable. */
 	CreateView();
 
 	obs_frontend_add_event_callback(FrontendEvent, this);
 
-	/* Default short scene */
 	obs_scene_t *defaultScene = CreateShortScene(Translate("NewSceneName"));
-	SetCurrentScene(defaultScene);
-	UpdateScenesCombo();
+	if (defaultScene) {
+		SetCurrentScene(defaultScene);
+		UpdateScenesCombo();
+	} else {
+		blog(LOG_WARNING, "[obs-shorts-vertical] Could not create default short scene");
+	}
 }
 
 ShortsDock::~ShortsDock()
@@ -407,14 +415,18 @@ void ShortsDock::CreateView()
 	DestroyView();
 
 	view = obs_view_create();
-	if (!view)
+	if (!view) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] obs_view_create failed");
 		return;
+	}
 
 	struct obs_video_info ovi;
+	memset(&ovi, 0, sizeof(ovi));
 	if (!obs_get_video_info(&ovi)) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] Video not ready yet; retrying view later");
+		/* Keep the view object; Add2 can be retried when video resets. */
 		ovi.fps_num = 30;
 		ovi.fps_den = 1;
-		ovi.graphics_module = "libobs-opengl";
 	}
 	ovi.base_width = canvasWidth;
 	ovi.base_height = canvasHeight;
@@ -422,12 +434,13 @@ void ShortsDock::CreateView()
 	ovi.output_height = canvasHeight;
 
 	video = obs_view_add2(view, &ovi);
-	if (!video) {
-		/* Fallback for older OBS without obs_view_add2 */
+	if (!video)
 		video = obs_view_add(view);
-	}
 
-	if (scene)
+	if (!video)
+		blog(LOG_WARNING, "[obs-shorts-vertical] Could not attach video to vertical view");
+
+	if (scene && view)
 		obs_view_set_source(view, 0, obs_scene_get_source(scene));
 }
 
