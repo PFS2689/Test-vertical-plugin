@@ -214,25 +214,33 @@ jobs:
             echo
             echo "### Install (Setup.exe)"
             echo "1. Close OBS Studio"
-            echo "2. Run \`${SETUP_NAME}\`"
-            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
+            echo "2. Run \`${SETUP_NAME}\` and approve the UAC prompt (ProgramData install)"
+            echo "3. Start OBS Studio **32.2.1**"
+            echo "4. Enable the plugin in **Tools → Plugin Manager** if needed, then restart OBS"
+            echo "5. Open **View → Docks → Vertical Shorts** (also **Tools → Vertical Shorts**)"
             echo
             echo "### Install (zip)"
             echo "1. Close OBS"
-            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "2. Open \`%ProgramData%\\obs-studio\\plugins\`"
             echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
-            echo "4. Start OBS → **View → Docks → Vertical Shorts**"
+            echo "4. Final DLL path must be \`%ProgramData%\\obs-studio\\plugins\\obs-shorts-vertical\\bin\\64bit\\obs-shorts-vertical.dll\`"
+            echo "5. Start OBS → enable in Plugin Manager if needed → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Important (OBS load path)"
+            echo "OBS Studio on Windows loads third-party plugins from **ProgramData**, not AppData."
+            echo "Installing under \`%APPDATA%\\obs-studio\\plugins\` will **not** load the plugin."
             echo
             echo "### Safety analysis"
             echo "- **Windows Defender + ClamAV malware scans: CLEAN** (zip, Setup.exe, and DLL; release is blocked if anything is flagged)"
             echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
-            echo "- It only copies the plugin into \`%APPDATA%\\obs-studio\\plugins\` (per-user, no Administrator rights)"
+            echo "- It only copies the plugin into \`%ProgramData%\\obs-studio\\plugins\` (Administrator / UAC required)"
             echo "- No downloads, no Run-key changes, no bundled third-party stub"
             echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
+            echo "- Built against **OBS Studio 32.2.1**"
             echo "- Source code: https://github.com/${{ github.repository }}"
             echo
             echo "### Authenticode"
-            echo "Setup.exe and the embedded plugin DLL are **Authenticode-signed** in CI (Azure Artifact Signing or OV/EV PFX) with an RFC3161 timestamp."
+            echo "When CI signing credentials are configured, Setup.exe and the plugin DLL are Authenticode-signed with an RFC3161 timestamp."
             echo "You can verify in PowerShell:"
             echo
             echo '```powershell'
@@ -240,8 +248,8 @@ jobs:
             echo '```'
             echo
             echo "### Windows SmartScreen note"
-            echo "After Authenticode signing, SmartScreen may still show a first-run reputation warning for brand-new releases until download reputation builds."
-            echo "That is **not** a malware detection. Prefer verifying the Authenticode signature and SHA-256 checksums below."
+            echo "SmartScreen may warn on brand-new or unsigned builds until download reputation builds."
+            echo "That is **not** a malware detection. Prefer verifying SHA-256 checksums below (and Authenticode when signed)."
             echo "Do **not** disable Windows Defender."
             echo
             echo "### Checksums (SHA-256)"

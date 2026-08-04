@@ -170,7 +170,10 @@ function(_check_dependencies)
       continue()
     endif()
 
-    if(dependency STREQUAL obs-studio)
+    # Tag archives historically used baseUrl/<file> where file already embeds the
+    # version (e.g. 31.1.1.zip). Release source bundles use baseUrl/<version>/<file>
+    # (e.g. .../download/32.2.1/OBS-Studio-32.2.1-Sources.tar.gz).
+    if(dependency STREQUAL obs-studio AND file MATCHES "^[0-9]")
       set(url ${url}/${file})
     else()
       set(url ${url}/${version}/${file})

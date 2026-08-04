@@ -179,6 +179,11 @@ function Package {
 
     if (Test-Path "${ProjectRoot}/INSTALL-WINDOWS.txt") {
         Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" "${ReleaseDir}/INSTALL.txt"
+        # Also ship INSTALL.txt inside the plugin tree (Setup embeds + extracts it there).
+        $pluginInstall = Join-Path $ReleaseDir 'obs-shorts-vertical\INSTALL.txt'
+        if (Test-Path (Split-Path -Parent $pluginInstall)) {
+            Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" $pluginInstall
+        }
     }
 
     Get-ChildItem -Path $ReleaseDir -Recurse -Filter *.pdb -ErrorAction SilentlyContinue |

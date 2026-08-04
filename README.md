@@ -24,18 +24,21 @@ Dock title: **Vertical Shorts**
 
 ## Install / test
 
-1. Install the current Setup.exe or zip release.
-2. Open OBS.
-3. Go to **View → Docks → Vertical Shorts**.
-4. Open **⚙️ Settings → Vertical Streaming** and configure a Vertical Streaming Destination with a vertical-only server URL and stream key from the platform dashboard.
-5. Confirm the main OBS canvas and main stream settings remain unchanged.
-6. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
-7. Confirm output files save to the selected vertical recording path.
+1. Install the current Setup.exe (UAC / Administrator) or zip release into  
+   `%ProgramData%\obs-studio\plugins\obs-shorts-vertical\`  
+   (OBS does **not** load plugins from `%APPDATA%\obs-studio\plugins` on Windows).
+2. Open OBS Studio **32.2.1**.
+3. If needed, enable **Vertical Shorts Plugin** in **Tools → Plugin Manager**, then restart OBS.
+4. Go to **View → Docks → Vertical Shorts** (also **Tools → Vertical Shorts**).
+5. Open **⚙️ Settings → Vertical Streaming** and configure a Vertical Streaming Destination with a vertical-only server URL and stream key from the platform dashboard.
+6. Confirm the main OBS canvas and main stream settings remain unchanged.
+7. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+8. Confirm output files save to the selected vertical recording path.
 
 ## Requirements
 
 - Windows 10/11 64-bit  
-- OBS Studio **31+** (built against 31.1.1)
+- OBS Studio **32.2.1** (built against 32.2.1 / obs-deps 2026-07-15)
 
 ## Build
 

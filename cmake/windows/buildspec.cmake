@@ -14,8 +14,9 @@ function(_check_dependencies_windows)
   set(prebuilt_destination "obs-deps-VERSION-ARCH")
   set(qt6_filename "windows-deps-qt6-VERSION-ARCH-REVISION.zip")
   set(qt6_destination "obs-deps-qt6-VERSION-ARCH")
-  set(obs-studio_filename "VERSION.zip")
-  set(obs-studio_destination "obs-studio-VERSION")
+  # OBS 32+ ships full sources (frontend included) as a release asset.
+  set(obs-studio_filename "OBS-Studio-VERSION-Sources.tar.gz")
+  set(obs-studio_destination "obs-studio-VERSION-sources")
   set(dependencies_list prebuilt qt6 obs-studio)
 
   _check_dependencies()

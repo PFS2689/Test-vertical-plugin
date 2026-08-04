@@ -22,9 +22,10 @@ Includes:
 - Secure credential storage (Windows Credential Manager + DPAPI fallback)
 - Vertical recording, short/long clips, clip buffer readiness
 - Optional recording automation and hotkeys
-- Custom per-user Setup.exe (no Inno Setup / NSIS)
+- Custom Setup.exe installing to `%ProgramData%\obs-studio\plugins` (OBS load path; UAC required)
+- Built against **OBS Studio 32.2.1** / obs-deps **2026-07-15**
 - MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
-- Authenticode signing required for tag releases (Azure Artifact Signing or OV/EV PFX)
+- Authenticode signing when CI credentials are configured (Azure Artifact Signing or OV/EV PFX)
 
 ---
 

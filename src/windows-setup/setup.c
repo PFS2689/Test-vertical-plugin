@@ -1,8 +1,12 @@
 /*
- * Vertical Shorts Plugin — minimal per-user Windows installer
+ * Vertical Shorts Plugin — Windows installer
  *
- * Purpose: copy the embedded OBS plugin files into
- *   %APPDATA%\obs-studio\plugins\obs-shorts-vertical\
+ * Purpose: copy the embedded OBS plugin files into the path OBS actually
+ * scans for third-party modules on Windows:
+ *   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
+ *
+ * OBS Studio (including 32.2.1) calls GetProgramDataPath("obs-studio/plugins/%module%")
+ * and does NOT load plugins from %APPDATA%\obs-studio\plugins.
  *
  * Deliberately avoids third-party installer frameworks (Inno Setup, NSIS,
  * etc.) whose stubs are frequently abused by malware and therefore trip
@@ -10,10 +14,10 @@
  *
  * This program:
  *  - does not download anything
- *  - does not require Administrator rights
+ *  - requires Administrator rights (ProgramData is machine-wide)
  *  - does not launch other programs
  *  - does not modify Run keys, services, or browsers
- *  - only writes into the current user's OBS plugins folder
+ *  - only writes OBS plugin files under ProgramData\obs-studio\plugins
  */
 
 #ifndef UNICODE
@@ -48,7 +52,7 @@ static BOOL EnsureDirectoryTree(const wchar_t *path)
 
 	len = wcslen(tmp);
 	for (size_t i = 0; i < len; ++i) {
-		if (tmp[i] == L'/' )
+		if (tmp[i] == L'/')
 			tmp[i] = L'\\';
 	}
 
@@ -109,15 +113,23 @@ static BOOL WriteResourceToFile(HWND owner, int resourceId, const wchar_t *destP
 	}
 	*slash = L'\0';
 	if (!EnsureDirectoryTree(dir)) {
-		ShowError(owner, L"Could not create the OBS plugins folder.");
+		ShowError(owner, L"Could not create the OBS plugins folder.\r\n\r\n"
+				 L"ProgramData installs require Administrator rights.\r\n"
+				 L"Re-run Setup and approve the UAC prompt.");
 		return FALSE;
 	}
 
 	HANDLE file = CreateFileW(destPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
 				  FILE_ATTRIBUTE_NORMAL, NULL);
 	if (file == INVALID_HANDLE_VALUE) {
-		ShowError(owner, L"Could not write plugin files.\n\n"
-				 L"Close OBS Studio and try again.");
+		const DWORD err = GetLastError();
+		if (err == ERROR_ACCESS_DENIED) {
+			ShowError(owner, L"Access denied writing plugin files.\r\n\r\n"
+					 L"Close OBS Studio, then re-run Setup as Administrator.");
+		} else {
+			ShowError(owner, L"Could not write plugin files.\r\n\r\n"
+					 L"Close OBS Studio and try again.");
+		}
 		return FALSE;
 	}
 
@@ -132,14 +144,47 @@ static BOOL WriteResourceToFile(HWND owner, int resourceId, const wchar_t *destP
 	return TRUE;
 }
 
+/* OBS scans ProgramData, not AppData, for third-party plugins on Windows. */
 static BOOL GetPluginsRoot(wchar_t *out, size_t outChars)
 {
-	wchar_t appdata[MAX_PATH];
-	const HRESULT hr = SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appdata);
+	wchar_t programData[MAX_PATH];
+	const HRESULT hr =
+		SHGetFolderPathW(NULL, CSIDL_COMMON_APPDATA, NULL, SHGFP_TYPE_CURRENT, programData);
 	if (FAILED(hr))
 		return FALSE;
 	return SUCCEEDED(StringCchPrintfW(out, outChars, L"%s\\obs-studio\\plugins\\obs-shorts-vertical",
-					  appdata));
+					  programData));
+}
+
+/* Older builds incorrectly installed under AppData — remove that dead copy. */
+static void RemoveLegacyAppDataInstall(void)
+{
+	wchar_t appdata[MAX_PATH];
+	wchar_t legacyRoot[MAX_PATH];
+	wchar_t path[MAX_PATH];
+
+	if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, SHGFP_TYPE_CURRENT, appdata)))
+		return;
+	if (FAILED(StringCchPrintfW(legacyRoot, MAX_PATH, L"%s\\obs-studio\\plugins\\obs-shorts-vertical",
+				    appdata)))
+		return;
+
+	StringCchPrintfW(path, MAX_PATH, L"%s\\bin\\64bit\\obs-shorts-vertical.dll", legacyRoot);
+	DeleteFileW(path);
+	StringCchPrintfW(path, MAX_PATH, L"%s\\data\\locale\\en-US.ini", legacyRoot);
+	DeleteFileW(path);
+	StringCchPrintfW(path, MAX_PATH, L"%s\\INSTALL.txt", legacyRoot);
+	DeleteFileW(path);
+
+	StringCchPrintfW(path, MAX_PATH, L"%s\\bin\\64bit", legacyRoot);
+	RemoveDirectoryW(path);
+	StringCchPrintfW(path, MAX_PATH, L"%s\\bin", legacyRoot);
+	RemoveDirectoryW(path);
+	StringCchPrintfW(path, MAX_PATH, L"%s\\data\\locale", legacyRoot);
+	RemoveDirectoryW(path);
+	StringCchPrintfW(path, MAX_PATH, L"%s\\data", legacyRoot);
+	RemoveDirectoryW(path);
+	RemoveDirectoryW(legacyRoot);
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev, PWSTR cmdLine, int showCmd)
@@ -151,16 +196,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev, PWSTR cmdLine, int showC
 
 	wchar_t pluginsRoot[MAX_PATH];
 	if (!GetPluginsRoot(pluginsRoot, MAX_PATH)) {
-		ShowError(NULL, L"Could not locate your AppData folder.");
+		ShowError(NULL, L"Could not locate the ProgramData folder.");
 		return 1;
 	}
 
-	wchar_t message[1024];
-	StringCchPrintfW(message, 1024,
+	wchar_t message[1280];
+	StringCchPrintfW(message, 1280,
 			 L"Install Vertical Shorts Plugin %S for OBS Studio?\r\n\r\n"
 			 L"This open-source installer only copies plugin files to:\r\n"
 			 L"%s\r\n\r\n"
-			 L"No administrator rights are required.\r\n"
+			 L"Administrator rights are required (OBS loads plugins from ProgramData).\r\n"
 			 L"Please close OBS Studio before continuing.",
 			 VSP_SETUP_VERSION_A, pluginsRoot);
 
@@ -183,11 +228,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE prev, PWSTR cmdLine, int showC
 	if (!WriteResourceToFile(NULL, IDR_INSTALL_TXT, installTxtPath))
 		return 1;
 
-	StringCchPrintfW(message, 1024,
+	RemoveLegacyAppDataInstall();
+
+	StringCchPrintfW(message, 1280,
 			 L"Vertical Shorts Plugin %S was installed.\r\n\r\n"
 			 L"Next steps:\r\n"
-			 L"1. Start OBS Studio\r\n"
-			 L"2. Open View → Docks → Vertical Shorts\r\n\r\n"
+			 L"1. Start OBS Studio 32.2.1 (or newer)\r\n"
+			 L"2. If prompted, enable the plugin in Tools → Plugin Manager, then restart OBS\r\n"
+			 L"3. Open View → Docks → Vertical Shorts\r\n"
+			 L"   (also available under Tools → Vertical Shorts)\r\n\r\n"
 			 L"To uninstall later, delete:\r\n%s",
 			 VSP_SETUP_VERSION_A, pluginsRoot);
 	MessageBoxW(NULL, message, L"Vertical Shorts Plugin Setup", MB_OK | MB_ICONINFORMATION);

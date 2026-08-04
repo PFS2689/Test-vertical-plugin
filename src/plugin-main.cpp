@@ -11,6 +11,7 @@
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-shorts-vertical", "en-US")
+OBS_MODULE_AUTHOR("Vertical Shorts Plugin Contributors")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
@@ -23,6 +24,8 @@ MODULE_EXPORT const char *obs_module_name(void)
 }
 
 static ShortsDock *g_dock = nullptr;
+static bool g_save_callback_registered = false;
+static bool g_tools_menu_registered = false;
 static const char *DOCK_ID = "vertical_shorts_plugin_dock";
 
 static void SaveCallback(obs_data_t *save_data, bool saving, void *)
@@ -60,6 +63,29 @@ static void ShowDock()
 	dock->toggleViewAction()->setChecked(true);
 }
 
+static void OnToolsShowDock(void *)
+{
+	if (!g_dock) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] Tools menu: dock not registered yet");
+		return;
+	}
+	ShowDock();
+}
+
+static void RegisterToolsMenu()
+{
+	if (g_tools_menu_registered)
+		return;
+
+	const char *title = obs_module_text("ShortsDockMenu");
+	if (!title || !*title)
+		title = "Vertical Shorts";
+
+	obs_frontend_add_tools_menu_item(title, OnToolsShowDock, nullptr);
+	g_tools_menu_registered = true;
+	blog(LOG_INFO, "[obs-shorts-vertical] Tools menu item registered (%s)", title);
+}
+
 static void RegisterDock()
 {
 	if (g_dock)
@@ -71,19 +97,28 @@ static void RegisterDock()
 		return;
 	}
 
-	g_dock = new ShortsDock(main);
+	ShortsDock *dock = new ShortsDock(main);
 
 	const char *title = obs_module_text("ShortsDock");
 	if (!title || !*title)
 		title = "Vertical Shorts";
 
-	const bool ok = obs_frontend_add_dock_by_id(DOCK_ID, title, g_dock);
+	const bool ok = obs_frontend_add_dock_by_id(DOCK_ID, title, dock);
 	if (!ok) {
 		blog(LOG_ERROR, "[obs-shorts-vertical] Failed to add dock id '%s' (already used?)", DOCK_ID);
+		/* Do not leave a sticky pointer — allow a later retry. */
+		delete dock;
 		return;
 	}
 
-	obs_frontend_add_save_callback(SaveCallback, nullptr);
+	g_dock = dock;
+
+	if (!g_save_callback_registered) {
+		obs_frontend_add_save_callback(SaveCallback, nullptr);
+		g_save_callback_registered = true;
+	}
+
+	RegisterToolsMenu();
 
 	/* OBS adds docks hidden by default — show it so users can find it. */
 	ShowDock();
@@ -103,15 +138,19 @@ static void FrontendEvent(enum obs_frontend_event event, void *)
 
 bool obs_module_load(void)
 {
-	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin %s", PLUGIN_VERSION);
+	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin %s (libobs %s)",
+	     PLUGIN_VERSION, obs_get_version_string());
+
+	const char *bin = obs_get_module_binary_path(obs_current_module());
+	const char *data = obs_get_module_data_path(obs_current_module());
+	blog(LOG_INFO, "[obs-shorts-vertical] Module binary: %s", bin ? bin : "(null)");
+	blog(LOG_INFO, "[obs-shorts-vertical] Module data: %s", data ? data : "(null)");
 
 	/* Defer dock creation until the UI/video pipeline is ready. */
 	obs_frontend_add_event_callback(FrontendEvent, nullptr);
 
 	/* If the frontend already finished loading (hot reload / late load), register now. */
 	if (obs_frontend_get_main_window()) {
-		/* Still wait for FINISHED_LOADING when starting with OBS; only register
-		 * immediately if scenes are already available (indicates UI is ready). */
 		obs_source_t *scene = obs_frontend_get_current_scene();
 		if (scene) {
 			obs_source_release(scene);
@@ -122,10 +161,21 @@ bool obs_module_load(void)
 	return true;
 }
 
+void obs_module_post_load(void)
+{
+	blog(LOG_INFO, "[obs-shorts-vertical] obs_module_post_load");
+	/* Retry dock registration if FINISHED_LOADING already fired before load. */
+	if (!g_dock && obs_frontend_get_main_window())
+		RegisterDock();
+}
+
 void obs_module_unload(void)
 {
 	obs_frontend_remove_event_callback(FrontendEvent, nullptr);
-	obs_frontend_remove_save_callback(SaveCallback, nullptr);
+	if (g_save_callback_registered) {
+		obs_frontend_remove_save_callback(SaveCallback, nullptr);
+		g_save_callback_registered = false;
+	}
 
 	if (g_dock) {
 		obs_frontend_remove_dock(DOCK_ID);
