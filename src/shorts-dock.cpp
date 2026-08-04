@@ -1,5 +1,4 @@
 #include "shorts-dock.hpp"
-#include "audio-mixer-panel.hpp"
 #include "credential-store.hpp"
 #include "display-helpers.hpp"
 #include "settings-dialog.hpp"
@@ -9,11 +8,15 @@
 
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QContextMenuEvent>
+#include <QDoubleSpinBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
@@ -21,9 +24,11 @@
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QSlider>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <QtMath>
 
@@ -322,13 +327,15 @@ bool CollectMissingMirrorItems(obs_scene_t *, obs_sceneitem_t *item, void *param
 ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 {
 	setObjectName("ShortsDock");
-	setMinimumWidth(420);
-	setMinimumHeight(360);
+	setMinimumWidth(200);
+	setMinimumHeight(240);
 
 	settings.recordingPath = vsp::DefaultRecordingPath();
 	vsp::EnsureDefaultDestinations(settings);
 	vsp::CanvasSizeForPreset(settings.canvasPreset, settings.customWidth, settings.customHeight, verticalWidth,
 				 verticalHeight);
+	verticalTransitionName = QStringLiteral("Fade");
+	verticalTransitionDurationMs = 300;
 
 	outputs = std::make_unique<VerticalOutputs>(this);
 	automation = std::make_unique<RecordingAutomation>(outputs.get(), this);
@@ -341,6 +348,7 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 
 	BuildUI();
 	CreateView();
+	EnsureDefaultVerticalScene();
 	if (outputs) {
 		outputs->SetVideo(video);
 		outputs->ApplySettings(settings);
@@ -352,11 +360,9 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	RegisterHotkeys();
 
 	RefreshVerticalWorkspace(true);
-	RefreshScenesList();
-	RefreshTransitions();
-	RefreshMixer();
+	EmitSceneUiChanged();
+	emit verticalTransitionsChanged();
 
-	/* Start clip buffer promptly when configured — no artificial multi-second delay. */
 	QTimer::singleShot(0, this, [this]() { EnsureBufferIfConfigured(); });
 }
 
@@ -386,7 +392,10 @@ ShortsDock::~ShortsDock()
 		scene = nullptr;
 	}
 
-	verticalMirrors.clear();
+	verticalTransition = nullptr;
+	transitionPreviewScene = nullptr;
+	verticalScenes.clear();
+	sceneOrder.clear();
 
 	obs_enter_graphics();
 	gs_vertexbuffer_destroy(rectFill);
@@ -397,132 +406,11 @@ ShortsDock::~ShortsDock()
 void ShortsDock::BuildUI()
 {
 	auto *root = new QVBoxLayout(this);
-	root->setContentsMargins(6, 6, 6, 6);
-	root->setSpacing(6);
+	root->setContentsMargins(4, 4, 4, 4);
+	root->setSpacing(4);
 
-	auto *workspaceHint = new QLabel(Translate("VerticalWorkspaceHint"), this);
-	workspaceHint->setWordWrap(true);
-	workspaceHint->setStyleSheet(QStringLiteral("color: #aaa; font-size: 11px;"));
-	root->addWidget(workspaceHint);
-
-	autoIndicator = new QLabel(this);
-	autoIndicator->setVisible(false);
-	autoIndicator->setStyleSheet(QStringLiteral("color: #f0c040; font-size: 11px;"));
-	root->addWidget(autoIndicator);
-
-	auto *splitter = new QSplitter(Qt::Horizontal, this);
-
-	auto *left = new QWidget(splitter);
-	auto *leftLayout = new QVBoxLayout(left);
-	leftLayout->setContentsMargins(0, 0, 0, 0);
-	leftLayout->setSpacing(4);
-
-	leftLayout->addWidget(new QLabel(Translate("Scenes"), left));
-	scenesList = new QListWidget(left);
-	scenesList->setSelectionMode(QAbstractItemView::SingleSelection);
-	connect(scenesList, &QListWidget::itemSelectionChanged, this, &ShortsDock::OnSceneSelectionChanged);
-	leftLayout->addWidget(scenesList, 1);
-
-	auto *sceneBtns = new QHBoxLayout();
-	auto *addSceneBtn = MakeToolButton(left, QStringLiteral("+"), Translate("AddScene"));
-	auto *removeSceneBtn = MakeToolButton(left, QStringLiteral("\u2212"), Translate("RemoveScene"));
-	auto *dupSceneBtn = MakeToolButton(left, QStringLiteral("Dup"), Translate("DuplicateScene"));
-	auto *renameSceneBtn = MakeToolButton(left, QStringLiteral("Ren"), Translate("RenameScene"));
-	connect(addSceneBtn, &QToolButton::clicked, this, &ShortsDock::OnAddScene);
-	connect(removeSceneBtn, &QToolButton::clicked, this, &ShortsDock::OnRemoveScene);
-	connect(dupSceneBtn, &QToolButton::clicked, this, &ShortsDock::OnDuplicateScene);
-	connect(renameSceneBtn, &QToolButton::clicked, this, &ShortsDock::OnRenameScene);
-	sceneBtns->addWidget(addSceneBtn);
-	sceneBtns->addWidget(removeSceneBtn);
-	sceneBtns->addWidget(dupSceneBtn);
-	sceneBtns->addWidget(renameSceneBtn);
-	sceneBtns->addStretch(1);
-	leftLayout->addLayout(sceneBtns);
-
-	leftLayout->addWidget(new QLabel(Translate("Sources"), left));
-	sourcesList = new QListWidget(left);
-	sourcesList->setSelectionMode(QAbstractItemView::SingleSelection);
-	connect(sourcesList, &QListWidget::itemSelectionChanged, this, &ShortsDock::OnSourceSelectionChanged);
-	leftLayout->addWidget(sourcesList, 1);
-
-	auto *sourceBtns = new QHBoxLayout();
-	auto *addSrcBtn = MakeToolButton(left, QStringLiteral("+"), Translate("AddSource"));
-	auto *removeSrcBtn = MakeToolButton(left, QStringLiteral("\u2212"), Translate("RemoveSource"));
-	auto *visBtn = MakeToolButton(left, QStringLiteral("Vis"), Translate("ToggleVisible"));
-	auto *lockBtn = MakeToolButton(left, QStringLiteral("Lock"), Translate("ToggleLock"));
-	auto *propsBtn = MakeToolButton(left, QStringLiteral("Prop"), Translate("SourceProperties"));
-	auto *filtersBtn = MakeToolButton(left, QStringLiteral("Filt"), Translate("SourceFilters"));
-	auto *upBtn = MakeToolButton(left, QStringLiteral("Up"), Translate("MoveSourceUp"));
-	auto *downBtn = MakeToolButton(left, QStringLiteral("Dn"), Translate("MoveSourceDown"));
-	connect(addSrcBtn, &QToolButton::clicked, this, &ShortsDock::OnAddSource);
-	connect(removeSrcBtn, &QToolButton::clicked, this, &ShortsDock::OnRemoveSource);
-	connect(visBtn, &QToolButton::clicked, this, &ShortsDock::OnToggleSourceVisible);
-	connect(lockBtn, &QToolButton::clicked, this, &ShortsDock::OnToggleSourceLock);
-	connect(propsBtn, &QToolButton::clicked, this, &ShortsDock::OnSourceProperties);
-	connect(filtersBtn, &QToolButton::clicked, this, &ShortsDock::OnSourceFilters);
-	connect(upBtn, &QToolButton::clicked, this, &ShortsDock::OnSourceMoveUp);
-	connect(downBtn, &QToolButton::clicked, this, &ShortsDock::OnSourceMoveDown);
-	for (auto *b : {addSrcBtn, removeSrcBtn, visBtn, lockBtn, propsBtn, filtersBtn, upBtn, downBtn})
-		sourceBtns->addWidget(b);
-	sourceBtns->addStretch(1);
-	leftLayout->addLayout(sourceBtns);
-
-	leftLayout->addWidget(new QLabel(Translate("Transform"), left));
-	auto *form = new QGridLayout();
-	posXSpin = new QDoubleSpinBox(left);
-	posYSpin = new QDoubleSpinBox(left);
-	sizeWSpin = new QDoubleSpinBox(left);
-	sizeHSpin = new QDoubleSpinBox(left);
-	rotSpin = new QDoubleSpinBox(left);
-	for (auto *spin : {posXSpin, posYSpin, sizeWSpin, sizeHSpin}) {
-		spin->setRange(-100000.0, 100000.0);
-		spin->setDecimals(1);
-		spin->setSingleStep(1.0);
-		connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-			&ShortsDock::OnTransformEdited);
-	}
-	rotSpin->setRange(-360.0, 360.0);
-	rotSpin->setDecimals(1);
-	rotSpin->setSingleStep(1.0);
-	connect(rotSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &ShortsDock::OnTransformEdited);
-
-	form->addWidget(new QLabel(Translate("PositionX"), left), 0, 0);
-	form->addWidget(posXSpin, 0, 1);
-	form->addWidget(new QLabel(Translate("PositionY"), left), 0, 2);
-	form->addWidget(posYSpin, 0, 3);
-	form->addWidget(new QLabel(Translate("SizeW"), left), 1, 0);
-	form->addWidget(sizeWSpin, 1, 1);
-	form->addWidget(new QLabel(Translate("SizeH"), left), 1, 2);
-	form->addWidget(sizeHSpin, 1, 3);
-	form->addWidget(new QLabel(Translate("Rotation"), left), 2, 0);
-	form->addWidget(rotSpin, 2, 1);
-	leftLayout->addLayout(form);
-
-	auto *transformButtons = new QHBoxLayout();
-	auto *fitBtn = new QPushButton(Translate("FitToScreen"), left);
-	auto *stretchBtn = new QPushButton(Translate("StretchToScreen"), left);
-	auto *centerBtn = new QPushButton(Translate("CenterToScreen"), left);
-	auto *resetBtn = new QPushButton(Translate("ResetTransform"), left);
-	connect(fitBtn, &QPushButton::clicked, this, &ShortsDock::OnFitToScreen);
-	connect(stretchBtn, &QPushButton::clicked, this, &ShortsDock::OnStretchToScreen);
-	connect(centerBtn, &QPushButton::clicked, this, &ShortsDock::OnCenterToScreen);
-	connect(resetBtn, &QPushButton::clicked, this, &ShortsDock::OnResetTransform);
-	transformButtons->addWidget(fitBtn);
-	transformButtons->addWidget(stretchBtn);
-	transformButtons->addWidget(centerBtn);
-	transformButtons->addWidget(resetBtn);
-	leftLayout->addLayout(transformButtons);
-
-	left->setMinimumWidth(240);
-	splitter->addWidget(left);
-
-	auto *center = new QWidget(splitter);
-	auto *centerLayout = new QGridLayout(center);
-	centerLayout->setContentsMargins(0, 0, 0, 0);
-	centerLayout->setSpacing(0);
-
-	preview = new OBSQTDisplay(center);
-	preview->setMinimumSize(160, 160);
+	preview = new OBSQTDisplay(this);
+	preview->setMinimumSize(120, 120);
 	preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	previewEventFilter = BuildEventFilter();
 	preview->installEventFilter(previewEventFilter.get());
@@ -533,96 +421,48 @@ void ShortsDock::BuildUI()
 			obs_display_add_draw_callback(display, DrawCallback, this);
 	};
 	connect(preview, &OBSQTDisplay::DisplayCreated, addDrawCallback);
-	centerLayout->addWidget(preview, 0, 0);
+	root->addWidget(preview, 1);
 
-	controlsOverlay = new QWidget(center);
-	controlsOverlay->setObjectName("vsControlsOverlay");
-	auto *overlayLayout = new QHBoxLayout(controlsOverlay);
-	overlayLayout->setContentsMargins(8, 8, 8, 8);
-	overlayLayout->setSpacing(6);
+	controlsBar = new QWidget(this);
+	controlsBar->setObjectName(QStringLiteral("vsControlsBar"));
+	auto *bar = new QHBoxLayout(controlsBar);
+	bar->setContentsMargins(0, 0, 0, 0);
+	bar->setSpacing(6);
 
-	goLiveBtn = new QPushButton(QString::fromUtf8("\U0001F7E2 ") + Translate("GoLive"), controlsOverlay);
+	goLiveBtn = new QPushButton(QString::fromUtf8("\U0001F7E2 ") + Translate("GoLive"), controlsBar);
 	goLiveBtn->setCheckable(true);
 	goLiveBtn->setToolTip(Translate("GoLiveTip"));
+	goLiveBtn->setAccessibleName(Translate("GoLive"));
 	connect(goLiveBtn, &QPushButton::clicked, this, &ShortsDock::OnGoLive);
 
-	recordBtn = new QPushButton(QString::fromUtf8("\u23FA\uFE0F ") + Translate("Record"), controlsOverlay);
+	recordBtn = new QPushButton(QString::fromUtf8("\u23FA\uFE0F ") + Translate("Record"), controlsBar);
 	recordBtn->setCheckable(true);
 	recordBtn->setToolTip(Translate("RecordTip"));
+	recordBtn->setAccessibleName(Translate("Record"));
 	connect(recordBtn, &QPushButton::clicked, this, &ShortsDock::OnRecord);
 
-	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8 ") + Translate("ShortClip"), controlsOverlay);
-	shortClipBtn->setAccessibleName(Translate("ShortClip"));
+	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8 ") + Translate("ShortClip"), controlsBar);
 	shortClipBtn->setToolTip(Translate("ShortClipTip"));
+	shortClipBtn->setAccessibleName(Translate("ShortClip"));
 	connect(shortClipBtn, &QPushButton::clicked, this, &ShortsDock::OnShortClip);
 
-	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7 ") + Translate("LongClip"), controlsOverlay);
-	longClipBtn->setAccessibleName(Translate("LongClip"));
+	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7 ") + Translate("LongClip"), controlsBar);
 	longClipBtn->setToolTip(Translate("LongClipTip"));
+	longClipBtn->setAccessibleName(Translate("LongClip"));
 	connect(longClipBtn, &QPushButton::clicked, this, &ShortsDock::OnLongClip);
 
-	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F ") + Translate("Settings"), controlsOverlay);
-	settingsBtn->setAccessibleName(Translate("Settings"));
+	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F ") + Translate("Settings"), controlsBar);
 	settingsBtn->setToolTip(Translate("SettingsTip"));
+	settingsBtn->setAccessibleName(Translate("Settings"));
 	connect(settingsBtn, &QPushButton::clicked, this, &ShortsDock::OnSettings);
 
-	goLiveBtn->setAccessibleName(Translate("GoLive"));
-	recordBtn->setAccessibleName(Translate("Record"));
-
-	overlayLayout->addWidget(goLiveBtn);
-	overlayLayout->addWidget(recordBtn);
-	overlayLayout->addWidget(shortClipBtn);
-	overlayLayout->addWidget(longClipBtn);
-	overlayLayout->addWidget(settingsBtn);
-	controlsOverlay->setStyleSheet(
-		QStringLiteral("QWidget#vsControlsOverlay { background: rgba(0,0,0,140); border-radius: 6px; }"
-			       "QPushButton { padding: 4px 8px; }"));
-	centerLayout->addWidget(controlsOverlay, 0, 0, Qt::AlignBottom | Qt::AlignRight);
-	splitter->addWidget(center);
-
-	auto *right = new QWidget(splitter);
-	auto *rightLayout = new QVBoxLayout(right);
-	rightLayout->setContentsMargins(0, 0, 0, 0);
-	rightLayout->setSpacing(4);
-
-	rightLayout->addWidget(new QLabel(Translate("AudioMixer"), right));
-	auto *mixerScroll = new QScrollArea(right);
-	mixerScroll->setWidgetResizable(true);
-	mixerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-	mixerPanel = new AudioMixerPanel(mixerScroll);
-	mixerScroll->setWidget(mixerPanel);
-	rightLayout->addWidget(mixerScroll, 1);
-
-	bufferStatusLabel = new QLabel(Translate("BufferStopped"), right);
-	bufferStatusLabel->setWordWrap(true);
-	bufferStatusLabel->setStyleSheet(QStringLiteral("color: #bbb; font-size: 11px;"));
-	rightLayout->addWidget(bufferStatusLabel);
-
-	rightLayout->addWidget(new QLabel(Translate("Transitions"), right));
-	transitionCombo = new QComboBox(right);
-	connect(transitionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&ShortsDock::OnTransitionChanged);
-	rightLayout->addWidget(transitionCombo);
-
-	auto *durRow = new QHBoxLayout();
-	durRow->addWidget(new QLabel(Translate("TransitionDuration"), right));
-	transitionDuration = new QSpinBox(right);
-	transitionDuration->setRange(0, 10000);
-	transitionDuration->setSingleStep(50);
-	transitionDuration->setValue(obs_frontend_get_transition_duration());
-	connect(transitionDuration, QOverload<int>::of(&QSpinBox::valueChanged), this,
-		&ShortsDock::OnTransitionDurationChanged);
-	durRow->addWidget(transitionDuration, 1);
-	rightLayout->addLayout(durRow);
-
-	right->setMinimumWidth(180);
-	splitter->addWidget(right);
-
-	splitter->setStretchFactor(0, 0);
-	splitter->setStretchFactor(1, 1);
-	splitter->setStretchFactor(2, 0);
-	splitter->setSizes({280, 480, 220});
-	root->addWidget(splitter, 1);
+	bar->addWidget(goLiveBtn);
+	bar->addWidget(recordBtn);
+	bar->addWidget(shortClipBtn);
+	bar->addWidget(longClipBtn);
+	bar->addWidget(settingsBtn);
+	bar->addStretch(1);
+	root->addWidget(controlsBar);
 }
 
 void ShortsDock::ApplyCanvasFromSettings()
@@ -634,23 +474,61 @@ void ShortsDock::ApplyCanvasFromSettings()
 void ShortsDock::RefreshVerticalWorkspace(bool force)
 {
 	UNUSED_PARAMETER(force);
-
 	CreateView();
 	if (outputs)
 		outputs->SetVideo(video);
+	EnsureDefaultVerticalScene();
+	if (scene)
+		SetActiveScene(scene, false);
+	EmitSourceUiChanged();
+}
 
-	obs_source_t *cur = obs_frontend_get_current_scene();
-	if (cur) {
-		obs_scene_t *mirror = EnsureVerticalMirror(cur);
-		SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
-		SetActiveScene(mirror, true);
-		obs_source_release(cur);
-	} else {
-		SetActiveScene(nullptr, false);
+void ShortsDock::EnsureDefaultVerticalScene()
+{
+	if (!verticalScenes.isEmpty())
+		return;
+
+	obs_scene_t *created = obs_scene_create_private("Vertical Scene");
+	if (!created)
+		return;
+	obs_source_t *src = obs_scene_get_source(created);
+	const char *uuid = src ? obs_source_get_uuid(src) : nullptr;
+	if (uuid && *uuid) {
+		const QString key = QString::fromUtf8(uuid);
+		verticalScenes.insert(key, created);
+		sceneOrder.append(key);
+		SetActiveScene(created, false);
 	}
+	obs_scene_release(created);
+}
 
-	RefreshSourcesList();
-	RefreshTransformControls();
+void ShortsDock::EmitSceneUiChanged()
+{
+	emit verticalScenesChanged();
+	EmitSourceUiChanged();
+}
+
+void ShortsDock::EmitSourceUiChanged()
+{
+	emit verticalSourcesChanged();
+	emit verticalTransformChanged();
+}
+
+obs_scene_t *ShortsDock::FindVerticalSceneByUuid(const QString &uuid) const
+{
+	auto it = verticalScenes.find(uuid);
+	if (it == verticalScenes.end())
+		return nullptr;
+	return it.value();
+}
+
+QString ShortsDock::ActiveSceneUuid() const
+{
+	if (!scene)
+		return {};
+	obs_source_t *src = obs_scene_get_source(scene);
+	const char *uuid = src ? obs_source_get_uuid(src) : nullptr;
+	return uuid ? QString::fromUtf8(uuid) : QString();
 }
 
 void ShortsDock::CreateView()
@@ -664,71 +542,62 @@ void ShortsDock::CreateView()
 	}
 
 	struct obs_video_info ovi;
-	memset(&ovi, 0, sizeof(ovi));
 	if (!obs_get_video_info(&ovi)) {
-		blog(LOG_WARNING, "[obs-shorts-vertical] Video not ready yet; using defaults");
-		ovi.fps_num = 30;
-		ovi.fps_den = 1;
+		blog(LOG_WARNING, "[obs-shorts-vertical] obs_get_video_info failed");
+		return;
 	}
 
-	ovi.base_width = ActiveCanvasWidth();
-	ovi.base_height = ActiveCanvasHeight();
-	ovi.output_width = ActiveCanvasWidth();
-	ovi.output_height = ActiveCanvasHeight();
-
-	video = obs_view_add2(view, &ovi);
+	struct obs_video_info viewOvi = ovi;
+	viewOvi.base_width = verticalWidth;
+	viewOvi.base_height = verticalHeight;
+	viewOvi.output_width = verticalWidth;
+	viewOvi.output_height = verticalHeight;
+	video = obs_view_add2(view, &viewOvi);
 	if (!video)
-		video = obs_view_add(view);
-
-	if (!video)
-		blog(LOG_WARNING, "[obs-shorts-vertical] Could not attach video to vertical view");
-
-	if (scene && view)
-		obs_view_set_source(view, 0, obs_scene_get_source(scene));
+		blog(LOG_WARNING, "[obs-shorts-vertical] obs_view_add2 failed");
 }
 
 void ShortsDock::DestroyView()
 {
 	if (view) {
-		obs_view_set_source(view, 0, nullptr);
-		if (video) {
-			obs_view_remove(view);
-			video = nullptr;
-		}
+		obs_view_remove(view);
 		obs_view_destroy(view);
 		view = nullptr;
+		video = nullptr;
 	}
 }
 
 void ShortsDock::SetCanvasSize(uint32_t width, uint32_t height)
 {
-	if (width < 160 || height < 160)
+	if (width < 2)
+		width = 2;
+	if (height < 2)
+		height = 2;
+	if (verticalWidth == width && verticalHeight == height && view && video)
 		return;
-
 	verticalWidth = width;
 	verticalHeight = height;
-	settings.customWidth = width;
-	settings.customHeight = height;
-
 	CreateView();
 	if (outputs)
 		outputs->SetVideo(video);
+	if (view && scene)
+		obs_view_set_source(view, 0, obs_scene_get_source(scene));
 }
 
-void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool isVerticalMirror)
+void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool withTransition)
 {
-	if (scene == newScene && sceneIsMirror == isVerticalMirror)
+	if (scene == newScene)
 		return;
 
+	obs_source_t *oldSrc = scene ? obs_scene_get_source(scene) : nullptr;
+	obs_source_t *newSrc = newScene ? obs_scene_get_source(newScene) : nullptr;
+
 	if (scene) {
-		obs_source_t *prev = obs_scene_get_source(scene);
-		if (prev)
-			obs_source_dec_showing(prev);
+		if (oldSrc)
+			obs_source_dec_showing(oldSrc);
 		obs_scene_release(scene);
 		scene = nullptr;
 	}
-
-	sceneIsMirror = isVerticalMirror;
 
 	if (newScene) {
 		scene = obs_scene_get_ref(newScene);
@@ -739,117 +608,111 @@ void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool isVerticalMirror)
 		}
 	}
 
-	if (view)
-		obs_view_set_source(view, 0, scene ? obs_scene_get_source(scene) : nullptr);
-
-	RefreshSourcesList();
-	RefreshTransformControls();
-}
-
-obs_scene_t *ShortsDock::EnsureVerticalMirror(obs_source_t *mainSceneSource)
-{
-	if (!mainSceneSource)
-		return nullptr;
-
-	const char *uuid = obs_source_get_uuid(mainSceneSource);
-	if (!uuid || !*uuid)
-		return nullptr;
-
-	const QString key = QString::fromUtf8(uuid);
-	auto it = verticalMirrors.find(key);
-	if (it != verticalMirrors.end()) {
-		obs_scene_t *existing = it.value();
-		if (existing) {
-			const QString expected =
-				QStringLiteral("VS | %1").arg(QString::fromUtf8(obs_source_get_name(mainSceneSource)));
-			obs_source_t *mirrorSrc = obs_scene_get_source(existing);
-			if (mirrorSrc && expected != QString::fromUtf8(obs_source_get_name(mirrorSrc)))
-				obs_source_set_name(mirrorSrc, expected.toUtf8().constData());
-			return existing;
+	if (view) {
+		if (withTransition && oldSrc && newSrc && verticalTransitionDurationMs > 0) {
+			obs_source_t *tr = EnsureVerticalTransitionSource(verticalTransitionName);
+			if (tr) {
+				obs_transition_set(tr, oldSrc);
+				obs_view_set_source(view, 0, tr);
+				obs_transition_start(tr, OBS_TRANSITION_MODE_AUTO, verticalTransitionDurationMs, newSrc);
+			} else {
+				obs_view_set_source(view, 0, newSrc);
+			}
+		} else {
+			obs_view_set_source(view, 0, newSrc);
 		}
 	}
 
-	const QString name = QStringLiteral("VS | %1").arg(QString::fromUtf8(obs_source_get_name(mainSceneSource)));
-	obs_scene_t *mirror = obs_scene_create_private(name.toUtf8().constData());
-	if (!mirror)
-		return nullptr;
-
-	verticalMirrors.insert(key, mirror);
-	obs_scene_release(mirror);
-	return verticalMirrors.value(key);
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::SyncMirrorFromMain(obs_scene_t *mirror, obs_scene_t *mainScene)
+obs_source_t *ShortsDock::EnsureVerticalTransitionSource(const QString &name)
 {
-	if (!mirror || !mainScene)
-		return;
+	obs_frontend_source_list transitions = {};
+	obs_frontend_get_transitions(&transitions);
+	const char *id = "fade_transition";
+	obs_data_t *copySettings = nullptr;
+	for (size_t i = 0; i < transitions.sources.num; i++) {
+		obs_source_t *src = transitions.sources.array[i];
+		if (name == QString::fromUtf8(obs_source_get_name(src))) {
+			id = obs_source_get_id(src);
+			copySettings = obs_source_get_settings(src);
+			break;
+		}
+	}
+	obs_frontend_source_list_free(&transitions);
 
-	std::vector<obs_source_t *> mainSources;
-	CollectSourcesCtx collect{&mainSources};
-	obs_scene_enum_items(mainScene, CollectMainSources, &collect);
+	if (verticalTransition) {
+		if (QString::fromUtf8(obs_source_get_id(verticalTransition)) == QString::fromUtf8(id)) {
+			if (copySettings)
+				obs_data_release(copySettings);
+			return verticalTransition;
+		}
+		verticalTransition = nullptr;
+	}
 
-	std::vector<obs_sceneitem_t *> toRemove;
-	RemoveMissingCtx removeCtx{&mainSources, &toRemove};
-	obs_scene_enum_items(mirror, CollectMissingMirrorItems, &removeCtx);
-	for (obs_sceneitem_t *item : toRemove)
-		obs_sceneitem_remove(item);
-
-	obs_scene_enum_items(
-		mainScene,
-		[](obs_scene_t *, obs_sceneitem_t *mainItem, void *param) -> bool {
-			auto *mirrorScene = static_cast<obs_scene_t *>(param);
-			obs_source_t *src = obs_sceneitem_get_source(mainItem);
-			if (!src || MirrorHasSource(mirrorScene, src))
-				return true;
-
-			obs_sceneitem_t *added = obs_scene_add(mirrorScene, src);
-			if (!added)
-				return true;
-
-			/* Seed new mirror items from main transform once; later edits stay local. */
-			vec2 pos, scale;
-			obs_sceneitem_get_pos(mainItem, &pos);
-			obs_sceneitem_get_scale(mainItem, &scale);
-			obs_sceneitem_set_pos(added, &pos);
-			obs_sceneitem_set_scale(added, &scale);
-			obs_sceneitem_set_rot(added, obs_sceneitem_get_rot(mainItem));
-			obs_sceneitem_crop crop;
-			obs_sceneitem_get_crop(mainItem, &crop);
-			obs_sceneitem_set_crop(added, &crop);
-			obs_sceneitem_set_visible(added, obs_sceneitem_visible(mainItem));
-			return true;
-		},
-		mirror);
+	obs_source_t *priv = obs_source_create_private(id, "Vertical Transition", copySettings);
+	if (copySettings)
+		obs_data_release(copySettings);
+	if (!priv)
+		priv = obs_source_create_private("fade_transition", "Vertical Transition", nullptr);
+	if (priv) {
+		verticalTransition = priv;
+		obs_source_release(priv);
+	}
+	return verticalTransition;
 }
 
-void ShortsDock::OnSceneSelectionChanged()
+vsp::AutomationStatus ShortsDock::CurrentAutomationStatus() const
 {
-	if (loadingSettings || clearing)
-		return;
-
-	QListWidgetItem *item = scenesList->currentItem();
-	if (!item)
-		return;
-
-	const QString uuid = item->data(Qt::UserRole).toString();
-	obs_source_t *mainSrc = FindFrontendSceneByUuid(uuid);
-	if (!mainSrc)
-		return;
-
-	obs_frontend_set_current_scene(mainSrc);
-
-	obs_scene_t *mirror = EnsureVerticalMirror(mainSrc);
-	SyncMirrorFromMain(mirror, obs_scene_from_source(mainSrc));
-	SetActiveScene(mirror, true);
-
-	const QString sceneName = QString::fromUtf8(obs_source_get_name(mainSrc));
-	if (automation)
-		automation->OnSceneChanged(uuid, sceneName);
-
-	obs_source_release(mainSrc);
+	return automationStatus;
 }
 
-void ShortsDock::OnAddScene()
+QString ShortsDock::CurrentAutomationStatusText() const
+{
+	return automationStatusText;
+}
+
+/* ---------------- Companion dock API ---------------- */
+
+void ShortsDock::PopulateScenesList(QListWidget *list)
+{
+	if (!list)
+		return;
+	const QString current = ActiveSceneUuid();
+	list->clear();
+	int select = -1;
+	for (int i = 0; i < sceneOrder.size(); ++i) {
+		const QString &uuid = sceneOrder[i];
+		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
+		if (!sc)
+			continue;
+		obs_source_t *src = obs_scene_get_source(sc);
+		auto *row = new QListWidgetItem(QString::fromUtf8(obs_source_get_name(src)));
+		row->setData(Qt::UserRole, uuid);
+		list->addItem(row);
+		if (uuid == current)
+			select = list->count() - 1;
+	}
+	if (select >= 0)
+		list->setCurrentRow(select);
+}
+
+void ShortsDock::RequestSelectScene(const QString &uuid)
+{
+	if (loadingSettings || clearing || uuid.isEmpty())
+		return;
+	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
+	if (!sc)
+		return;
+	SetActiveScene(sc, true);
+	if (automation) {
+		obs_source_t *src = obs_scene_get_source(sc);
+		automation->OnSceneChanged(uuid, QString::fromUtf8(obs_source_get_name(src)));
+	}
+}
+
+void ShortsDock::RequestAddScene()
 {
 	bool ok = false;
 	QString name = QInputDialog::getText(this, Translate("AddScene"), Translate("NewSceneName"), QLineEdit::Normal,
@@ -857,113 +720,130 @@ void ShortsDock::OnAddScene()
 	if (!ok || name.trimmed().isEmpty())
 		return;
 
-	obs_scene_t *created = obs_scene_create(name.trimmed().toUtf8().constData());
+	obs_scene_t *created = obs_scene_create_private(name.trimmed().toUtf8().constData());
 	if (!created)
 		return;
-
 	obs_source_t *src = obs_scene_get_source(created);
-	obs_frontend_set_current_scene(src);
+	const char *uuid = src ? obs_source_get_uuid(src) : nullptr;
+	if (uuid && *uuid) {
+		const QString key = QString::fromUtf8(uuid);
+		verticalScenes.insert(key, created);
+		sceneOrder.append(key);
+		SetActiveScene(created, false);
+	}
 	obs_scene_release(created);
-	RefreshScenesList();
+	EmitSceneUiChanged();
 }
 
-void ShortsDock::OnRemoveScene()
+void ShortsDock::RequestRemoveScene()
 {
-	QListWidgetItem *item = scenesList->currentItem();
-	if (!item)
+	const QString uuid = ActiveSceneUuid();
+	if (uuid.isEmpty())
 		return;
-
 	if (QMessageBox::question(this, Translate("RemoveScene"), Translate("ConfirmRemoveScene")) != QMessageBox::Yes)
 		return;
 
-	obs_source_t *src = FindFrontendSceneByUuid(item->data(Qt::UserRole).toString());
-	if (!src)
-		return;
+	if (scene && ActiveSceneUuid() == uuid)
+		SetActiveScene(nullptr, false);
 
-	const char *uuid = obs_source_get_uuid(src);
-	if (uuid)
-		verticalMirrors.remove(QString::fromUtf8(uuid));
-
-	obs_source_remove(src);
-	obs_source_release(src);
-	RefreshScenesList();
+	verticalScenes.remove(uuid);
+	sceneOrder.removeAll(uuid);
+	if (!sceneOrder.isEmpty())
+		RequestSelectScene(sceneOrder.first());
+	else
+		EnsureDefaultVerticalScene();
+	EmitSceneUiChanged();
 }
 
-void ShortsDock::OnDuplicateScene()
+void ShortsDock::RequestDuplicateScene()
 {
-	QListWidgetItem *item = scenesList->currentItem();
-	if (!item)
+	const QString uuid = ActiveSceneUuid();
+	obs_scene_t *srcScene = FindVerticalSceneByUuid(uuid);
+	if (!srcScene)
 		return;
-
-	obs_source_t *src = FindFrontendSceneByUuid(item->data(Qt::UserRole).toString());
-	if (!src)
-		return;
-
-	obs_scene_t *sceneObj = obs_scene_from_source(src);
+	obs_source_t *src = obs_scene_get_source(srcScene);
 	bool ok = false;
 	QString name = QInputDialog::getText(this, Translate("DuplicateScene"), Translate("NewSceneName"),
 					     QLineEdit::Normal,
 					     QString::fromUtf8(obs_source_get_name(src)) + QStringLiteral(" Copy"), &ok);
-	if (!ok || name.trimmed().isEmpty()) {
-		obs_source_release(src);
+	if (!ok || name.trimmed().isEmpty())
 		return;
-	}
 
-	obs_scene_t *dup = obs_scene_duplicate(sceneObj, name.trimmed().toUtf8().constData(), OBS_SCENE_DUP_REFS);
-	if (dup) {
-		obs_frontend_set_current_scene(obs_scene_get_source(dup));
-		obs_scene_release(dup);
+	obs_scene_t *dup = obs_scene_duplicate(srcScene, name.trimmed().toUtf8().constData(), OBS_SCENE_DUP_PRIVATE_REFS);
+	if (!dup)
+		return;
+	obs_source_t *dupSrc = obs_scene_get_source(dup);
+	const char *newUuid = dupSrc ? obs_source_get_uuid(dupSrc) : nullptr;
+	if (newUuid && *newUuid) {
+		const QString key = QString::fromUtf8(newUuid);
+		verticalScenes.insert(key, dup);
+		sceneOrder.append(key);
+		SetActiveScene(dup, false);
 	}
-	obs_source_release(src);
-	RefreshScenesList();
+	obs_scene_release(dup);
+	EmitSceneUiChanged();
 }
 
-void ShortsDock::OnRenameScene()
+void ShortsDock::RequestRenameScene()
 {
-	QListWidgetItem *item = scenesList->currentItem();
-	if (!item)
+	const QString uuid = ActiveSceneUuid();
+	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
+	if (!sc)
 		return;
-
-	obs_source_t *src = FindFrontendSceneByUuid(item->data(Qt::UserRole).toString());
-	if (!src)
-		return;
-
+	obs_source_t *src = obs_scene_get_source(sc);
 	bool ok = false;
-	QString name = QInputDialog::getText(this, Translate("RenameScene"), Translate("NewSceneName"),
+	QString name = QInputDialog::getText(this, Translate("RenameScene"), Translate("RenameScenePrompt"),
 					     QLineEdit::Normal, QString::fromUtf8(obs_source_get_name(src)), &ok);
-	if (ok && !name.trimmed().isEmpty())
-		obs_source_set_name(src, name.trimmed().toUtf8().constData());
-
-	obs_source_release(src);
-	RefreshScenesList();
+	if (!ok || name.trimmed().isEmpty())
+		return;
+	obs_source_set_name(src, name.trimmed().toUtf8().constData());
+	EmitSceneUiChanged();
 }
 
-void ShortsDock::OnSourceSelectionChanged()
+void ShortsDock::PopulateSourcesList(QListWidget *list)
+{
+	if (!list)
+		return;
+	list->clear();
+	if (!scene)
+		return;
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
+			auto *lw = static_cast<QListWidget *>(param);
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			QString label = QString::fromUtf8(obs_source_get_name(source));
+			if (!obs_sceneitem_visible(item))
+				label += QStringLiteral(" [hid]");
+			if (obs_sceneitem_locked(item))
+				label += QStringLiteral(" [lock]");
+			auto *row = new QListWidgetItem(label);
+			row->setData(Qt::UserRole, QVariant::fromValue((qint64)obs_sceneitem_get_id(item)));
+			if (obs_sceneitem_selected(item))
+				row->setSelected(true);
+			lw->addItem(row);
+			return true;
+		},
+		list);
+}
+
+void ShortsDock::RequestSelectSource(qint64 itemId)
 {
 	if (!scene || updatingTransform)
 		return;
-
-	QListWidgetItem *item = sourcesList->currentItem();
-	if (!item)
-		return;
-
-	const int64_t id = item->data(Qt::UserRole).toLongLong();
 	obs_scene_enum_items(scene, ClearSelection, nullptr);
-	obs_sceneitem_t *si = FindItemById(scene, id);
+	obs_sceneitem_t *si = FindItemById(scene, itemId);
 	if (si)
 		obs_sceneitem_select(si, true);
-	RefreshTransformControls();
+	emit verticalTransformChanged();
 }
 
-void ShortsDock::OnAddSource()
+void ShortsDock::RequestAddSource()
 {
-	obs_source_t *current = obs_frontend_get_current_scene();
-	if (!current)
-		return;
-	obs_scene_t *mainScene = obs_scene_from_source(current);
-	if (!mainScene) {
-		obs_source_release(current);
-		return;
+	if (!scene) {
+		EnsureDefaultVerticalScene();
+		if (!scene)
+			return;
 	}
 
 	std::vector<std::string> names;
@@ -988,8 +868,7 @@ void ShortsDock::OnAddSource()
 		&data);
 
 	if (names.empty()) {
-		QMessageBox::information(this, Translate("AddSource"), Translate("SelectSource"));
-		obs_source_release(current);
+		QMessageBox::information(this, Translate("AddSource"), Translate("NoSources"));
 		return;
 	}
 
@@ -1000,64 +879,35 @@ void ShortsDock::OnAddSource()
 	bool ok = false;
 	QString chosen =
 		QInputDialog::getItem(this, Translate("AddSource"), Translate("SelectSource"), items, 0, false, &ok);
-	if (!ok || chosen.isEmpty()) {
-		obs_source_release(current);
+	if (!ok || chosen.isEmpty())
 		return;
-	}
 
 	for (size_t i = 0; i < names.size(); i++) {
 		if (chosen != QString::fromUtf8(names[i].c_str()))
 			continue;
-		obs_scene_add(mainScene, sources[i]);
+		/* Add into the vertical scene only — never touch horizontal production. */
+		obs_scene_add(scene, sources[i]);
 		break;
 	}
-
-	obs_scene_t *mirror = EnsureVerticalMirror(current);
-	SyncMirrorFromMain(mirror, mainScene);
-	SetActiveScene(mirror, true);
-
-	obs_source_release(current);
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnRemoveSource()
+void ShortsDock::RequestRemoveSource()
 {
 	if (!scene)
 		return;
-
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-
-	if (QMessageBox::question(this, Translate("RemoveSource"), Translate("ConfirmRemoveSource")) !=
-	    QMessageBox::Yes)
+	if (QMessageBox::question(this, Translate("RemoveSource"), Translate("ConfirmRemoveSource")) != QMessageBox::Yes)
 		return;
-
-	obs_source_t *current = obs_frontend_get_current_scene();
-	obs_scene_t *mainScene = current ? obs_scene_from_source(current) : nullptr;
-
-	if (mainScene) {
-		for (obs_sceneitem_t *item : selected) {
-			obs_source_t *src = obs_sceneitem_get_source(item);
-			obs_sceneitem_t *mainItem = FindItemBySource(mainScene, src);
-			if (mainItem)
-				obs_sceneitem_remove(mainItem);
-		}
-		obs_scene_t *mirror = EnsureVerticalMirror(current);
-		SyncMirrorFromMain(mirror, mainScene);
-		SetActiveScene(mirror, true);
-	} else {
-		for (obs_sceneitem_t *item : selected)
-			obs_sceneitem_remove(item);
-		RefreshSourcesList();
-		RefreshTransformControls();
-	}
-
-	if (current)
-		obs_source_release(current);
+	for (obs_sceneitem_t *item : selected)
+		obs_sceneitem_remove(item);
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnToggleSourceVisible()
+void ShortsDock::RequestToggleSourceVisible()
 {
 	if (!scene)
 		return;
@@ -1065,10 +915,10 @@ void ShortsDock::OnToggleSourceVisible()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	for (obs_sceneitem_t *item : selected)
 		obs_sceneitem_set_visible(item, !obs_sceneitem_visible(item));
-	RefreshSourcesList();
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnToggleSourceLock()
+void ShortsDock::RequestToggleSourceLock()
 {
 	if (!scene)
 		return;
@@ -1076,11 +926,10 @@ void ShortsDock::OnToggleSourceLock()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	for (obs_sceneitem_t *item : selected)
 		obs_sceneitem_set_locked(item, !obs_sceneitem_locked(item));
-	RefreshSourcesList();
-	RefreshTransformControls();
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnSourceProperties()
+void ShortsDock::RequestSourceProperties()
 {
 	if (!scene)
 		return;
@@ -1088,12 +937,12 @@ void ShortsDock::OnSourceProperties()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-	obs_source_t *src = obs_sceneitem_get_source(selected.front());
-	if (src)
-		obs_frontend_open_source_properties(src);
+	obs_source_t *source = obs_sceneitem_get_source(selected.front());
+	if (source)
+		obs_frontend_open_source_properties(source);
 }
 
-void ShortsDock::OnSourceFilters()
+void ShortsDock::RequestSourceFilters()
 {
 	if (!scene)
 		return;
@@ -1101,147 +950,135 @@ void ShortsDock::OnSourceFilters()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-	obs_source_t *src = obs_sceneitem_get_source(selected.front());
-	if (src)
-		obs_frontend_open_source_filters(src);
+	obs_source_t *source = obs_sceneitem_get_source(selected.front());
+	if (source)
+		obs_frontend_open_source_filters(source);
 }
 
-void ShortsDock::OnSourceMoveUp()
+void ShortsDock::RequestSourceMoveUp()
 {
 	if (!scene)
 		return;
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected)
-		obs_sceneitem_set_order(item, OBS_ORDER_MOVE_UP);
-	RefreshSourcesList();
+	if (selected.empty())
+		return;
+	obs_sceneitem_set_order(selected.front(), OBS_ORDER_MOVE_UP);
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnSourceMoveDown()
+void ShortsDock::RequestSourceMoveDown()
 {
 	if (!scene)
 		return;
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected)
-		obs_sceneitem_set_order(item, OBS_ORDER_MOVE_DOWN);
-	RefreshSourcesList();
-}
-
-void ShortsDock::OnFitToScreen()
-{
-	if (!scene)
+	if (selected.empty())
 		return;
-	const float cw = (float)ActiveCanvasWidth();
-	const float ch = (float)ActiveCanvasHeight();
-	std::vector<obs_sceneitem_t *> selected;
-	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected) {
-		if (obs_sceneitem_locked(item))
-			continue;
-		obs_source_t *source = obs_sceneitem_get_source(item);
-		uint32_t srcW = std::max(1u, obs_source_get_width(source));
-		uint32_t srcH = std::max(1u, obs_source_get_height(source));
-		float scale = std::min(cw / (float)srcW, ch / (float)srcH);
-		vec2 s;
-		vec2_set(&s, scale, scale);
-		obs_sceneitem_set_scale(item, &s);
-		vec2 pos;
-		vec2_set(&pos, (cw - (float)srcW * scale) * 0.5f, (ch - (float)srcH * scale) * 0.5f);
-		obs_sceneitem_set_pos(item, &pos);
-		obs_sceneitem_set_rot(item, 0.0f);
-	}
-	RefreshTransformControls();
+	obs_sceneitem_set_order(selected.front(), OBS_ORDER_MOVE_DOWN);
+	EmitSourceUiChanged();
 }
 
-void ShortsDock::OnStretchToScreen()
-{
-	if (!scene)
-		return;
-	const float cw = (float)ActiveCanvasWidth();
-	const float ch = (float)ActiveCanvasHeight();
-	std::vector<obs_sceneitem_t *> selected;
-	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected) {
-		if (obs_sceneitem_locked(item))
-			continue;
-		obs_source_t *source = obs_sceneitem_get_source(item);
-		uint32_t srcW = std::max(1u, obs_source_get_width(source));
-		uint32_t srcH = std::max(1u, obs_source_get_height(source));
-		vec2 s;
-		vec2_set(&s, cw / (float)srcW, ch / (float)srcH);
-		obs_sceneitem_set_scale(item, &s);
-		vec2 pos;
-		vec2_set(&pos, 0.0f, 0.0f);
-		obs_sceneitem_set_pos(item, &pos);
-		obs_sceneitem_set_rot(item, 0.0f);
-	}
-	RefreshTransformControls();
-}
-
-void ShortsDock::OnCenterToScreen()
-{
-	if (!scene)
-		return;
-	const float cw = (float)ActiveCanvasWidth();
-	const float ch = (float)ActiveCanvasHeight();
-	std::vector<obs_sceneitem_t *> selected;
-	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected) {
-		if (obs_sceneitem_locked(item))
-			continue;
-		ItemTransform info = ReadItemTransform(item);
-		obs_source_t *source = obs_sceneitem_get_source(item);
-		obs_sceneitem_crop crop;
-		obs_sceneitem_get_crop(item, &crop);
-		float w = float(obs_source_get_width(source) - crop.left - crop.right) * info.scale.x;
-		float h = float(obs_source_get_height(source) - crop.top - crop.bottom) * info.scale.y;
-		vec2 pos;
-		vec2_set(&pos, (cw - w) * 0.5f, (ch - h) * 0.5f);
-		obs_sceneitem_set_pos(item, &pos);
-	}
-	RefreshTransformControls();
-}
-
-void ShortsDock::OnResetTransform()
+void ShortsDock::RequestFitToScreen()
 {
 	if (!scene)
 		return;
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
-	for (obs_sceneitem_t *item : selected) {
-		if (obs_sceneitem_locked(item))
-			continue;
-		vec2 one, zero;
-		vec2_set(&one, 1.0f, 1.0f);
-		vec2_set(&zero, 0.0f, 0.0f);
-		obs_sceneitem_set_pos(item, &zero);
-		obs_sceneitem_set_scale(item, &one);
-		obs_sceneitem_set_rot(item, 0.0f);
-		obs_sceneitem_crop crop = {0, 0, 0, 0};
-		obs_sceneitem_set_crop(item, &crop);
-	}
-	RefreshTransformControls();
+	if (selected.empty())
+		return;
+	obs_sceneitem_t *item = selected.front();
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	uint32_t sw = std::max(1u, obs_source_get_width(source));
+	uint32_t sh = std::max(1u, obs_source_get_height(source));
+	float scale = std::min(float(verticalWidth) / float(sw), float(verticalHeight) / float(sh));
+	vec2 s;
+	vec2_set(&s, scale, scale);
+	obs_sceneitem_set_scale(item, &s);
+	vec2 pos;
+	vec2_set(&pos, (float(verticalWidth) - float(sw) * scale) * 0.5f,
+		 (float(verticalHeight) - float(sh) * scale) * 0.5f);
+	obs_sceneitem_set_pos(item, &pos);
+	emit verticalTransformChanged();
 }
 
-void ShortsDock::OnTransformEdited()
+void ShortsDock::RequestStretchToScreen()
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	obs_sceneitem_t *item = selected.front();
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	uint32_t sw = std::max(1u, obs_source_get_width(source));
+	uint32_t sh = std::max(1u, obs_source_get_height(source));
+	vec2 s;
+	vec2_set(&s, float(verticalWidth) / float(sw), float(verticalHeight) / float(sh));
+	obs_sceneitem_set_scale(item, &s);
+	vec2 pos;
+	vec2_set(&pos, 0.0f, 0.0f);
+	obs_sceneitem_set_pos(item, &pos);
+	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestCenterToScreen()
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	obs_sceneitem_t *item = selected.front();
+	ItemTransform info = ReadItemTransform(item);
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	float w = float(obs_source_get_width(source)) * info.scale.x;
+	float h = float(obs_source_get_height(source)) * info.scale.y;
+	vec2 pos;
+	vec2_set(&pos, (float(verticalWidth) - w) * 0.5f, (float(verticalHeight) - h) * 0.5f);
+	obs_sceneitem_set_pos(item, &pos);
+	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestResetTransform()
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	obs_sceneitem_t *item = selected.front();
+	vec2 one;
+	vec2_set(&one, 1.0f, 1.0f);
+	vec2 zero;
+	vec2_set(&zero, 0.0f, 0.0f);
+	obs_sceneitem_set_pos(item, &zero);
+	obs_sceneitem_set_scale(item, &one);
+	obs_sceneitem_set_rot(item, 0.0f);
+	obs_sceneitem_crop crop = {0, 0, 0, 0};
+	obs_sceneitem_set_crop(item, &crop);
+	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestTransformEdited(double x, double y, double w, double h, double rot)
 {
 	if (updatingTransform || !scene)
 		return;
-
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-
 	obs_sceneitem_t *item = selected.front();
 	if (obs_sceneitem_locked(item))
 		return;
 
 	vec2 pos;
-	vec2_set(&pos, (float)posXSpin->value(), (float)posYSpin->value());
+	vec2_set(&pos, (float)x, (float)y);
 	obs_sceneitem_set_pos(item, &pos);
-	obs_sceneitem_set_rot(item, (float)rotSpin->value());
+	obs_sceneitem_set_rot(item, (float)rot);
 
 	obs_source_t *source = obs_sceneitem_get_source(item);
 	uint32_t baseW = std::max(1u, obs_source_get_width(source));
@@ -1254,38 +1091,105 @@ void ShortsDock::OnTransformEdited()
 		innerW = 1.0f;
 	if (innerH < 1.0f)
 		innerH = 1.0f;
-
 	vec2 scale;
-	vec2_set(&scale, (float)sizeWSpin->value() / innerW, (float)sizeHSpin->value() / innerH);
+	vec2_set(&scale, (float)w / innerW, (float)h / innerH);
 	obs_sceneitem_set_scale(item, &scale);
 }
 
-void ShortsDock::OnTransitionChanged(int index)
+void ShortsDock::PopulateTransformControls(QDoubleSpinBox *x, QDoubleSpinBox *y, QDoubleSpinBox *w, QDoubleSpinBox *h,
+					   QDoubleSpinBox *rot)
 {
-	if (loadingSettings || index < 0)
+	if (!x || !y || !w || !h || !rot)
 		return;
-
-	const QString name = transitionCombo->itemData(index).toString();
-	if (name.isEmpty())
-		return;
-
-	obs_frontend_source_list transitions = {};
-	obs_frontend_get_transitions(&transitions);
-	for (size_t i = 0; i < transitions.sources.num; i++) {
-		obs_source_t *src = transitions.sources.array[i];
-		if (name == QString::fromUtf8(obs_source_get_name(src))) {
-			obs_frontend_set_current_transition(src);
-			break;
-		}
+	updatingTransform = true;
+	std::vector<obs_sceneitem_t *> selected;
+	if (scene)
+		obs_scene_enum_items(scene, CollectSelected, &selected);
+	bool enable = !selected.empty() && !obs_sceneitem_locked(selected.front());
+	x->setEnabled(enable);
+	y->setEnabled(enable);
+	w->setEnabled(enable);
+	h->setEnabled(enable);
+	rot->setEnabled(enable);
+	if (!selected.empty()) {
+		obs_sceneitem_t *item = selected.front();
+		ItemTransform info = ReadItemTransform(item);
+		obs_source_t *source = obs_sceneitem_get_source(item);
+		obs_sceneitem_crop crop;
+		obs_sceneitem_get_crop(item, &crop);
+		float bw = float(obs_source_get_width(source) - crop.left - crop.right) * info.scale.x;
+		float bh = float(obs_source_get_height(source) - crop.top - crop.bottom) * info.scale.y;
+		x->setValue(info.pos.x);
+		y->setValue(info.pos.y);
+		w->setValue(bw);
+		h->setValue(bh);
+		rot->setValue(info.rot);
 	}
-	obs_frontend_source_list_free(&transitions);
+	updatingTransform = false;
 }
 
-void ShortsDock::OnTransitionDurationChanged(int value)
+void ShortsDock::PopulateTransitions(QComboBox *combo, QSpinBox *duration)
+{
+	if (!combo || !duration)
+		return;
+	combo->clear();
+	obs_frontend_source_list transitions = {};
+	obs_frontend_get_transitions(&transitions);
+	int select = -1;
+	for (size_t i = 0; i < transitions.sources.num; i++) {
+		obs_source_t *src = transitions.sources.array[i];
+		const QString name = QString::fromUtf8(obs_source_get_name(src));
+		combo->addItem(name, name);
+		if (name == verticalTransitionName)
+			select = (int)i;
+	}
+	obs_frontend_source_list_free(&transitions);
+	if (select >= 0)
+		combo->setCurrentIndex(select);
+	else if (combo->count() > 0) {
+		combo->setCurrentIndex(0);
+		verticalTransitionName = combo->currentData().toString();
+	}
+	duration->setValue(verticalTransitionDurationMs);
+}
+
+void ShortsDock::RequestSetTransition(const QString &name)
+{
+	if (loadingSettings || name.isEmpty())
+		return;
+	verticalTransitionName = name;
+	EnsureVerticalTransitionSource(name);
+	/* Do not call obs_frontend_set_current_transition — vertical only. */
+}
+
+void ShortsDock::RequestSetTransitionDuration(int ms)
 {
 	if (loadingSettings)
 		return;
-	obs_frontend_set_transition_duration(value);
+	verticalTransitionDurationMs = ms < 0 ? 0 : (ms > 10000 ? 10000 : ms);
+}
+
+void ShortsDock::RequestPreviewTransition()
+{
+	if (!scene || !view)
+		return;
+	obs_source_t *cur = obs_scene_get_source(scene);
+	obs_source_t *tr = EnsureVerticalTransitionSource(verticalTransitionName);
+	if (!tr || !cur)
+		return;
+	obs_transition_set(tr, cur);
+	obs_view_set_source(view, 0, tr);
+	obs_transition_start(tr, OBS_TRANSITION_MODE_AUTO, verticalTransitionDurationMs, cur);
+}
+
+void ShortsDock::RequestTriggerTransition()
+{
+	if (sceneOrder.size() < 2)
+		return;
+	const QString cur = ActiveSceneUuid();
+	int idx = sceneOrder.indexOf(cur);
+	int next = (idx + 1) % sceneOrder.size();
+	RequestSelectScene(sceneOrder[next]);
 }
 
 void ShortsDock::OnGoLive()
@@ -1399,15 +1303,14 @@ void ShortsDock::CollectSceneLists(QStringList &names, QStringList &uuids) const
 {
 	names.clear();
 	uuids.clear();
-	obs_frontend_source_list scenes = {};
-	obs_frontend_get_scenes(&scenes);
-	for (size_t i = 0; i < scenes.sources.num; i++) {
-		obs_source_t *src = scenes.sources.array[i];
+	for (const QString &uuid : sceneOrder) {
+		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
+		if (!sc)
+			continue;
+		obs_source_t *src = obs_scene_get_source(sc);
 		names << QString::fromUtf8(obs_source_get_name(src));
-		const char *u = obs_source_get_uuid(src);
-		uuids << (u ? QString::fromUtf8(u) : QString());
+		uuids << uuid;
 	}
-	obs_frontend_source_list_free(&scenes);
 }
 
 void ShortsDock::OnSettings()
@@ -1446,6 +1349,8 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 		CreateView();
 		if (outputs)
 			outputs->SetVideo(video);
+		if (view && scene)
+			obs_view_set_source(view, 0, obs_scene_get_source(scene));
 	}
 
 	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
@@ -1501,186 +1406,13 @@ void ShortsDock::OnClipSaved(const QString &path, ClipKind kind)
 
 void ShortsDock::OnAutomationStatus(vsp::AutomationStatus status, const QString &text)
 {
-	if (!autoIndicator)
-		return;
-	const bool show = status == vsp::AutomationStatus::Recording || status == vsp::AutomationStatus::Starting ||
-			  status == vsp::AutomationStatus::Scheduled;
-	autoIndicator->setVisible(show || (status == vsp::AutomationStatus::Waiting && settings.automationEnabled));
-	autoIndicator->setText(text);
+	automationStatus = status;
+	automationStatusText = text;
 }
 
 void ShortsDock::OnAutomationNotify(const QString &title, const QString &message)
 {
 	QMessageBox::information(this, title, message);
-}
-
-void ShortsDock::RefreshScenesList()
-{
-	if (!scenesList)
-		return;
-
-	loadingSettings = true;
-	const QString previous = scenesList->currentItem() ? scenesList->currentItem()->data(Qt::UserRole).toString()
-							   : QString();
-
-	scenesList->clear();
-
-	obs_frontend_source_list scenes = {};
-	obs_frontend_get_scenes(&scenes);
-
-	obs_source_t *current = obs_frontend_get_current_scene();
-	QString currentUuid;
-	if (current) {
-		const char *uuid = obs_source_get_uuid(current);
-		if (uuid)
-			currentUuid = QString::fromUtf8(uuid);
-	}
-
-	int selectIndex = -1;
-	for (size_t i = 0; i < scenes.sources.num; i++) {
-		obs_source_t *src = scenes.sources.array[i];
-		const char *uuid = obs_source_get_uuid(src);
-		auto *row = new QListWidgetItem(QString::fromUtf8(obs_source_get_name(src)));
-		row->setData(Qt::UserRole, uuid ? QString::fromUtf8(uuid) : QString());
-		scenesList->addItem(row);
-		if (uuid && currentUuid == QString::fromUtf8(uuid))
-			selectIndex = (int)i;
-		else if (selectIndex < 0 && uuid && previous == QString::fromUtf8(uuid))
-			selectIndex = (int)i;
-	}
-
-	if (selectIndex >= 0)
-		scenesList->setCurrentRow(selectIndex);
-
-	obs_frontend_source_list_free(&scenes);
-	if (current)
-		obs_source_release(current);
-	loadingSettings = false;
-}
-
-void ShortsDock::RefreshSourcesList()
-{
-	if (!sourcesList)
-		return;
-
-	updatingTransform = true;
-	sourcesList->clear();
-	if (!scene) {
-		updatingTransform = false;
-		return;
-	}
-
-	obs_scene_enum_items(
-		scene,
-		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
-			auto *list = static_cast<QListWidget *>(param);
-			obs_source_t *source = obs_sceneitem_get_source(item);
-			QString label = QString::fromUtf8(obs_source_get_name(source));
-			if (!obs_sceneitem_visible(item))
-				label += QStringLiteral(" [hid]");
-			if (obs_sceneitem_locked(item))
-				label += QStringLiteral(" [lock]");
-			auto *row = new QListWidgetItem(label);
-			row->setData(Qt::UserRole, QVariant::fromValue((qint64)obs_sceneitem_get_id(item)));
-			if (obs_sceneitem_selected(item))
-				row->setSelected(true);
-			list->addItem(row);
-			return true;
-		},
-		sourcesList);
-
-	updatingTransform = false;
-}
-
-void ShortsDock::RefreshMixer()
-{
-	if (mixerPanel)
-		mixerPanel->Refresh();
-}
-
-void ShortsDock::EnsureBufferIfConfigured()
-{
-	if (!outputs || clearing || shuttingDown)
-		return;
-	if (!settings.clipBufferEnabled || !settings.autoStartClipBuffer)
-		return;
-	QString err;
-	outputs->EnsureClipBuffer(&err);
-}
-
-void ShortsDock::OnBufferStatus(BufferStatus, const QString &text)
-{
-	if (bufferStatusLabel)
-		bufferStatusLabel->setText(text);
-}
-
-void ShortsDock::RefreshTransitions()
-{
-	if (!transitionCombo)
-		return;
-
-	loadingSettings = true;
-	transitionCombo->clear();
-
-	obs_frontend_source_list transitions = {};
-	obs_frontend_get_transitions(&transitions);
-	obs_source_t *current = obs_frontend_get_current_transition();
-	QString currentName;
-	if (current)
-		currentName = QString::fromUtf8(obs_source_get_name(current));
-
-	int select = -1;
-	for (size_t i = 0; i < transitions.sources.num; i++) {
-		obs_source_t *src = transitions.sources.array[i];
-		const QString name = QString::fromUtf8(obs_source_get_name(src));
-		transitionCombo->addItem(name, name);
-		if (name == currentName)
-			select = (int)i;
-	}
-	if (select >= 0)
-		transitionCombo->setCurrentIndex(select);
-
-	if (transitionDuration)
-		transitionDuration->setValue(obs_frontend_get_transition_duration());
-
-	obs_frontend_source_list_free(&transitions);
-	if (current)
-		obs_source_release(current);
-	loadingSettings = false;
-}
-
-void ShortsDock::RefreshTransformControls()
-{
-	if (!posXSpin)
-		return;
-
-	updatingTransform = true;
-	std::vector<obs_sceneitem_t *> selected;
-	if (scene)
-		obs_scene_enum_items(scene, CollectSelected, &selected);
-
-	bool enable = !selected.empty() && !obs_sceneitem_locked(selected.front());
-	posXSpin->setEnabled(enable);
-	posYSpin->setEnabled(enable);
-	sizeWSpin->setEnabled(enable);
-	sizeHSpin->setEnabled(enable);
-	rotSpin->setEnabled(enable);
-
-	if (!selected.empty()) {
-		obs_sceneitem_t *item = selected.front();
-		ItemTransform info = ReadItemTransform(item);
-		obs_source_t *source = obs_sceneitem_get_source(item);
-		obs_sceneitem_crop crop;
-		obs_sceneitem_get_crop(item, &crop);
-		float w = float(obs_source_get_width(source) - crop.left - crop.right) * info.scale.x;
-		float h = float(obs_source_get_height(source) - crop.top - crop.bottom) * info.scale.y;
-		posXSpin->setValue(info.pos.x);
-		posYSpin->setValue(info.pos.y);
-		sizeWSpin->setValue(w);
-		sizeHSpin->setValue(h);
-		rotSpin->setValue(info.rot);
-	}
-	updatingTransform = false;
 }
 
 void ShortsDock::SaveSettings(obs_data_t *data)
@@ -1697,18 +1429,22 @@ void ShortsDock::SaveSettings(obs_data_t *data)
 	SaveHotkeys(data);
 
 	OBSDataArrayAutoRelease arr = obs_data_array_create();
-	for (auto it = verticalMirrors.begin(); it != verticalMirrors.end(); ++it) {
-		obs_scene_t *mirror = it.value();
-		if (!mirror)
+	for (const QString &uuid : sceneOrder) {
+		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
+		if (!sc)
 			continue;
 		OBSDataAutoRelease obj = obs_data_create();
-		obs_data_set_string(obj, "main_uuid", it.key().toUtf8().constData());
-		OBSDataAutoRelease sceneData = obs_save_source(obs_scene_get_source(mirror));
+		obs_data_set_string(obj, "uuid", uuid.toUtf8().constData());
+		obs_data_set_string(obj, "main_uuid", uuid.toUtf8().constData());
+		OBSDataAutoRelease sceneData = obs_save_source(obs_scene_get_source(sc));
 		obs_data_set_obj(obj, "source", sceneData);
 		obs_data_array_push_back(arr, obj);
 	}
 	obs_data_set_array(data, "scenes", arr);
 	obs_data_set_array(data, "vertical_mirrors", arr);
+	obs_data_set_string(data, "vertical_transition", verticalTransitionName.toUtf8().constData());
+	obs_data_set_int(data, "vertical_transition_ms", verticalTransitionDurationMs);
+	obs_data_set_string(data, "active_vertical_scene", ActiveSceneUuid().toUtf8().constData());
 }
 
 void ShortsDock::LoadSettings(obs_data_t *data)
@@ -1718,7 +1454,6 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	settings = vsp::LoadSettingsFromData(data, verticalWidth, verticalHeight);
 	vsp::EnsureDefaultDestinations(settings);
 
-	/* Load secrets from secure store. Migrate any legacy in-memory keys into the store. */
 	for (vsp::StreamDestination &d : settings.destinations) {
 		if (!d.streamKey.isEmpty()) {
 			vsp::SaveSecret(vsp::KeyTarget(d.id), d.streamKey);
@@ -1742,7 +1477,8 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	if (outputs)
 		outputs->ApplySettings(settings);
 
-	verticalMirrors.clear();
+	verticalScenes.clear();
+	sceneOrder.clear();
 
 	obs_data_array_t *arr = obs_data_get_array(data, "vertical_mirrors");
 	if (!arr)
@@ -1752,24 +1488,36 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 		const size_t count = obs_data_array_count(arr);
 		for (size_t i = 0; i < count; i++) {
 			OBSDataAutoRelease obj = obs_data_array_item(arr, i);
-			const char *uuid = obs_data_get_string(obj, "main_uuid");
+			const char *uuid = obs_data_get_string(obj, "uuid");
+			if (!uuid || !*uuid)
+				uuid = obs_data_get_string(obj, "main_uuid");
 			obs_data_t *sourceData = obs_data_get_obj(obj, "source");
-			if (!uuid || !*uuid || !sourceData) {
-				if (sourceData)
-					obs_data_release(sourceData);
+			if (!sourceData)
 				continue;
-			}
 			obs_source_t *src = obs_load_source(sourceData);
 			obs_data_release(sourceData);
 			if (!src)
 				continue;
 			obs_scene_t *loaded = obs_scene_from_source(src);
-			if (loaded)
-				verticalMirrors.insert(QString::fromUtf8(uuid), loaded);
+			if (loaded) {
+				const char *realUuid = obs_source_get_uuid(src);
+				const QString key = realUuid && *realUuid ? QString::fromUtf8(realUuid)
+									  : QString::fromUtf8(uuid ? uuid : "");
+				if (!key.isEmpty()) {
+					verticalScenes.insert(key, loaded);
+					sceneOrder.append(key);
+				}
+			}
 			obs_source_release(src);
 		}
 		obs_data_array_release(arr);
 	}
+
+	const char *trName = obs_data_get_string(data, "vertical_transition");
+	if (trName && *trName)
+		verticalTransitionName = QString::fromUtf8(trName);
+	if (obs_data_has_user_value(data, "vertical_transition_ms"))
+		verticalTransitionDurationMs = (int)obs_data_get_int(data, "vertical_transition_ms");
 
 	if (outputs)
 		outputs->ApplySettings(settings);
@@ -1778,31 +1526,12 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	RefreshVerticalWorkspace(true);
 	if (automation)
 		automation->ApplySettings(settings);
-	RefreshScenesList();
-	RefreshTransitions();
-	RefreshMixer();
-}
 
-
-void ShortsDock::SyncActiveSceneFromFrontend()
-{
-	RefreshScenesList();
-
-	obs_source_t *cur = obs_frontend_get_current_scene();
-	if (!cur)
-		return;
-
-	obs_scene_t *mirror = EnsureVerticalMirror(cur);
-	SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
-	SetActiveScene(mirror, true);
-
-	if (automation) {
-		const char *uuid = obs_source_get_uuid(cur);
-		automation->OnSceneChanged(uuid ? QString::fromUtf8(uuid) : QString(),
-					   QString::fromUtf8(obs_source_get_name(cur)));
-	}
-
-	obs_source_release(cur);
+	const char *active = obs_data_get_string(data, "active_vertical_scene");
+	if (active && *active)
+		RequestSelectScene(QString::fromUtf8(active));
+	EmitSceneUiChanged();
+	emit verticalTransitionsChanged();
 }
 
 void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data)
@@ -1817,6 +1546,8 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 			if (dock->automation)
 				dock->automation->OnObsFinishedLoading();
 			dock->EnsureBufferIfConfigured();
+			dock->EmitSceneUiChanged();
+			emit dock->verticalTransitionsChanged();
 		}, Qt::QueuedConnection);
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
@@ -1839,28 +1570,18 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 				dock->automation->OnMainStreamingStopped();
 		}, Qt::QueuedConnection);
 		break;
-	case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
-		QMetaObject::invokeMethod(dock, "RefreshScenesList", Qt::QueuedConnection);
-		break;
-	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
-		QMetaObject::invokeMethod(dock, "SyncActiveSceneFromFrontend", Qt::QueuedConnection);
-		break;
 	case OBS_FRONTEND_EVENT_TRANSITION_LIST_CHANGED:
-	case OBS_FRONTEND_EVENT_TRANSITION_CHANGED:
-	case OBS_FRONTEND_EVENT_TRANSITION_DURATION_CHANGED:
-		QMetaObject::invokeMethod(dock, "RefreshTransitions", Qt::QueuedConnection);
+		QMetaObject::invokeMethod(dock, [dock]() { emit dock->verticalTransitionsChanged(); },
+					  Qt::QueuedConnection);
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
-		QMetaObject::invokeMethod(dock, "RefreshMixer", Qt::QueuedConnection);
-		QMetaObject::invokeMethod(dock, "RefreshScenesList", Qt::QueuedConnection);
-		QMetaObject::invokeMethod(dock, "SyncActiveSceneFromFrontend", Qt::QueuedConnection);
+		QMetaObject::invokeMethod(dock, [dock]() { dock->EmitSourceUiChanged(); }, Qt::QueuedConnection);
 		break;
 	default:
 		break;
 	}
 }
-
 void ShortsDock::UpdatePreviewScale(int cx, int cy)
 {
 	GetScaleAndCenterPos((int)ActiveCanvasWidth(), (int)ActiveCanvasHeight(), cx, cy, previewX, previewY,
@@ -1989,8 +1710,7 @@ bool ShortsDock::HandlePreviewEvent(QObject *, QEvent *event)
 		if (stretchHandle == ItemHandle::None && !mouseOverItems)
 			DoSelect(startPos);
 
-		RefreshSourcesList();
-		RefreshTransformControls();
+		EmitSourceUiChanged();
 		return true;
 	}
 	case QEvent::MouseButtonRelease: {
@@ -2007,8 +1727,7 @@ bool ShortsDock::HandlePreviewEvent(QObject *, QEvent *event)
 		stretchItem = nullptr;
 		if (preview)
 			preview->setCursor(Qt::ArrowCursor);
-		RefreshSourcesList();
-		RefreshTransformControls();
+		EmitSourceUiChanged();
 		return true;
 	}
 	case QEvent::MouseMove: {
@@ -2039,7 +1758,7 @@ bool ShortsDock::HandlePreviewEvent(QObject *, QEvent *event)
 		else if (mouseOverItems)
 			MoveItems(pos);
 
-		RefreshTransformControls();
+		emit verticalTransformChanged();
 		return true;
 	}
 	case QEvent::ContextMenu: {
@@ -2058,25 +1777,22 @@ void ShortsDock::ShowContextMenu(const QPoint &globalPos)
 		return;
 
 	QMenu menu(this);
-	menu.addAction(Translate("FitToScreen"), this, &ShortsDock::OnFitToScreen);
-	menu.addAction(Translate("StretchToScreen"), this, &ShortsDock::OnStretchToScreen);
-	menu.addAction(Translate("CenterToScreen"), this, &ShortsDock::OnCenterToScreen);
-	menu.addAction(Translate("ResetTransform"), this, &ShortsDock::OnResetTransform);
+	menu.addAction(Translate("FitToScreen"), this, &ShortsDock::RequestFitToScreen);
+	menu.addAction(Translate("StretchToScreen"), this, &ShortsDock::RequestStretchToScreen);
+	menu.addAction(Translate("CenterToScreen"), this, &ShortsDock::RequestCenterToScreen);
+	menu.addAction(Translate("ResetTransform"), this, &ShortsDock::RequestResetTransform);
 	menu.addSeparator();
-	menu.addAction(Translate("SourceProperties"), this, &ShortsDock::OnSourceProperties);
-	menu.addAction(Translate("SourceFilters"), this, &ShortsDock::OnSourceFilters);
+	menu.addAction(Translate("SourceProperties"), this, &ShortsDock::RequestSourceProperties);
+	menu.addAction(Translate("SourceFilters"), this, &ShortsDock::RequestSourceFilters);
 	menu.addSeparator();
 
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	const bool has = !selected.empty();
-	const bool isLocked = has && obs_sceneitem_locked(selected.front());
-	const bool isVisible = has && obs_sceneitem_visible(selected.front());
 
-	QAction *lockAction = menu.addAction(Translate(isLocked ? "Unlock" : "Lock"), this, &ShortsDock::OnToggleSourceLock);
+	QAction *lockAction = menu.addAction(Translate("ToggleLock"), this, &ShortsDock::RequestToggleSourceLock);
 	lockAction->setEnabled(has);
-	QAction *visAction =
-		menu.addAction(Translate(isVisible ? "Hidden" : "Visible"), this, &ShortsDock::OnToggleSourceVisible);
+	QAction *visAction = menu.addAction(Translate("ToggleVisible"), this, &ShortsDock::RequestToggleSourceVisible);
 	visAction->setEnabled(has);
 
 	menu.exec(globalPos);
@@ -2129,6 +1845,7 @@ void ShortsDock::DoSelect(const vec2 &pos)
 	obs_scene_enum_items(scene, ClearSelection, nullptr);
 	if (item)
 		obs_sceneitem_select(item, true);
+	EmitSourceUiChanged();
 }
 
 void ShortsDock::GetStretchHandleData(const vec2 &pos)

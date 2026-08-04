@@ -13,7 +13,8 @@ class QSpinBox;
 class QLineEdit;
 class QLabel;
 class QCheckBox;
-class QTabWidget;
+class QListWidget;
+class QStackedWidget;
 class QDateEdit;
 class QTimeEdit;
 class QPushButton;
@@ -59,12 +60,18 @@ private slots:
 	void OnAccepted();
 
 private:
+	void BuildGeneralTab(QWidget *tab);
 	void BuildCanvasTab(QWidget *tab);
 	void BuildRecordingTab(QWidget *tab);
 	void BuildClipsTab(QWidget *tab);
 	void BuildAutomationTab(QWidget *tab);
 	void BuildStreamingTab(QWidget *tab);
+	void BuildAudioTab(QWidget *tab);
+	void BuildHotkeysTab(QWidget *tab);
 	void BuildAdvancedTab(QWidget *tab);
+	void BuildAboutTab(QWidget *tab);
+	void OnApply();
+	int AddCategory(const char *localeKey, const char *fallback, QWidget *page);
 	void SyncFieldsFromSettings();
 	void SyncStreamingFields();
 	void UpdateDestinationStatusCard();
@@ -147,8 +154,9 @@ private:
 	QLabel *autoStatusLabel = nullptr;
 	QCheckBox *confirmManualStop = nullptr;
 
-	/* Streaming destination */
-	QTabWidget *tabs = nullptr;
+	/* OBS-style pages: content stack (left) + category list (right) */
+	QStackedWidget *pages = nullptr;
+	QListWidget *categories = nullptr;
 	int streamingTabIndex = -1;
 	QLabel *streamHelp = nullptr;
 	QLabel *selectedPlatformHero = nullptr;

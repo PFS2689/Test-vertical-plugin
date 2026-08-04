@@ -14,6 +14,7 @@
 
 #include <obs-module.h>
 
+#include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDateEdit>
@@ -26,11 +27,12 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSpinBox>
-#include <QTabWidget>
+#include <QStackedWidget>
 #include <QTimeEdit>
 #include <QTimeZone>
 #include <QVBoxLayout>
@@ -48,6 +50,16 @@ QWidget *WrapScroll(QWidget *inner)
 
 } // namespace
 
+int SettingsDialog::AddCategory(const char *localeKey, const char *fallback, QWidget *page)
+{
+	QString title = QString::fromUtf8(obs_module_text(localeKey));
+	if (title.isEmpty() || title == QString::fromUtf8(localeKey))
+		title = QString::fromUtf8(fallback);
+	const int index = pages->addWidget(WrapScroll(page));
+	categories->addItem(title);
+	return index;
+}
+
 SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, const QStringList &names,
 			       const QStringList &uuids, vsp::AutomationStatus autoStatus, const QString &autoText,
 			       QWidget *parent)
@@ -61,51 +73,142 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 {
 	setWindowTitle(QString::fromUtf8(obs_module_text("Settings")));
 	setModal(true);
-	resize(560, 560);
+	setMinimumSize(720, 520);
+	resize(900, 640);
 
 	auto *root = new QVBoxLayout(this);
-	tabs = new QTabWidget(this);
+	root->setContentsMargins(8, 8, 8, 8);
+	root->setSpacing(8);
+
+	/* OBS Settings layout: pages on the left, category list on the right. */
+	auto *body = new QHBoxLayout();
+	body->setSpacing(8);
+
+	pages = new QStackedWidget(this);
+	categories = new QListWidget(this);
+	categories->setFixedWidth(180);
+	categories->setSelectionMode(QAbstractItemView::SingleSelection);
+	connect(categories, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
+
+	auto *general = new QWidget();
+	BuildGeneralTab(general);
+	AddCategory("TabGeneral", "General", general);
 
 	auto *canvas = new QWidget();
 	BuildCanvasTab(canvas);
-	tabs->addTab(WrapScroll(canvas), QString::fromUtf8(obs_module_text("TabVerticalCanvas")));
+	AddCategory("TabVerticalCanvas", "Vertical Canvas", canvas);
 
 	auto *recording = new QWidget();
 	BuildRecordingTab(recording);
-	tabs->addTab(WrapScroll(recording), QString::fromUtf8(obs_module_text("TabVerticalRecording")));
+	AddCategory("TabVerticalRecording", "Vertical Recording", recording);
 
 	auto *clips = new QWidget();
 	BuildClipsTab(clips);
-	tabs->addTab(WrapScroll(clips), QString::fromUtf8(obs_module_text("TabVerticalClips")));
+	AddCategory("TabVerticalClips", "Vertical Clips", clips);
 
 	auto *automation = new QWidget();
 	BuildAutomationTab(automation);
-	tabs->addTab(WrapScroll(automation), QString::fromUtf8(obs_module_text("TabVerticalRecordingAutomation")));
+	AddCategory("TabVerticalRecordingAutomation", "Recording Automation", automation);
 
 	auto *streaming = new QWidget();
 	BuildStreamingTab(streaming);
-	streamingTabIndex = tabs->addTab(WrapScroll(streaming), QString::fromUtf8(obs_module_text("TabVerticalStreaming")));
+	streamingTabIndex = AddCategory("TabVerticalStreaming", "Vertical Streaming", streaming);
+
+	auto *audio = new QWidget();
+	BuildAudioTab(audio);
+	AddCategory("TabAudio", "Audio", audio);
+
+	auto *hotkeys = new QWidget();
+	BuildHotkeysTab(hotkeys);
+	AddCategory("TabHotkeys", "Hotkeys", hotkeys);
 
 	auto *advanced = new QWidget();
 	BuildAdvancedTab(advanced);
-	tabs->addTab(WrapScroll(advanced), QString::fromUtf8(obs_module_text("TabAdvanced")));
+	AddCategory("TabAdvanced", "Advanced", advanced);
 
-	root->addWidget(tabs);
+	auto *about = new QWidget();
+	BuildAboutTab(about);
+	AddCategory("TabAbout", "About", about);
+
+	body->addWidget(pages, 1);
+	body->addWidget(categories, 0);
+	root->addLayout(body, 1);
+
+	if (categories->count() > 0)
+		categories->setCurrentRow(0);
 
 	auto *btnRow = new QHBoxLayout();
 	auto *resetBtn = new QPushButton(QString::fromUtf8(obs_module_text("ResetDefaults")), this);
 	connect(resetBtn, &QPushButton::clicked, this, &SettingsDialog::OnResetDefaults);
 	btnRow->addWidget(resetBtn);
 	btnRow->addStretch(1);
-	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+	auto *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Apply, this);
 	connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::OnAccepted);
 	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+	connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &SettingsDialog::OnApply);
 	btnRow->addWidget(buttons);
 	root->addLayout(btnRow);
 
 	vsp::EnsureDefaultDestinations(settings);
 	LoadSecretsIntoDestinations();
 	SyncFieldsFromSettings();
+}
+
+void SettingsDialog::BuildGeneralTab(QWidget *tab)
+{
+	auto *lay = new QVBoxLayout(tab);
+	auto *help = new QLabel(QString::fromUtf8(obs_module_text("GeneralHelp")), tab);
+	help->setWordWrap(true);
+	lay->addWidget(help);
+	lay->addStretch(1);
+}
+
+void SettingsDialog::BuildAudioTab(QWidget *tab)
+{
+	auto *lay = new QVBoxLayout(tab);
+	auto *help = new QLabel(QString::fromUtf8(obs_module_text("AudioHelp")), tab);
+	help->setWordWrap(true);
+	lay->addWidget(help);
+	lay->addStretch(1);
+}
+
+void SettingsDialog::BuildHotkeysTab(QWidget *tab)
+{
+	auto *lay = new QVBoxLayout(tab);
+	auto *help = new QLabel(QString::fromUtf8(obs_module_text("HotkeysHelp")), tab);
+	help->setWordWrap(true);
+	lay->addWidget(help);
+	lay->addStretch(1);
+}
+
+void SettingsDialog::BuildAboutTab(QWidget *tab)
+{
+	auto *lay = new QVBoxLayout(tab);
+	auto *version = new QLabel(QString::fromUtf8(obs_module_text("PluginVersionLabel")), tab);
+	if (version->text().isEmpty() || version->text() == QStringLiteral("PluginVersionLabel"))
+		version->setText(QStringLiteral("Vertical Shorts Plugin %1").arg(QString::fromUtf8(PLUGIN_VERSION)));
+	QFont vf = version->font();
+	vf.setBold(true);
+	version->setFont(vf);
+	lay->addWidget(version);
+	auto *desc = new QLabel(QString::fromUtf8(obs_module_text("AboutHelp")), tab);
+	desc->setWordWrap(true);
+	lay->addWidget(desc);
+	lay->addStretch(1);
+}
+
+void SettingsDialog::OnApply()
+{
+	QString error;
+	QString warning;
+	if (!ValidateAndCommit(&error, &warning)) {
+		if (!error.isEmpty())
+			QMessageBox::warning(this, QString::fromUtf8(obs_module_text("Settings")), error);
+		return;
+	}
+	if (!warning.isEmpty())
+		QMessageBox::information(this, QString::fromUtf8(obs_module_text("Settings")), warning);
 }
 
 void SettingsDialog::BuildCanvasTab(QWidget *tab)
@@ -1087,8 +1190,10 @@ void SettingsDialog::AnimatePlatformPanel()
 
 void SettingsDialog::FocusStreamingTab()
 {
-	if (tabs && streamingTabIndex >= 0)
-		tabs->setCurrentIndex(streamingTabIndex);
+	if (categories && pages && streamingTabIndex >= 0) {
+		categories->setCurrentRow(streamingTabIndex);
+		pages->setCurrentIndex(streamingTabIndex);
+	}
 }
 
 void SettingsDialog::ApplyPlatformFieldVisibility()

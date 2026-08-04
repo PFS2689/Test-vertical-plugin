@@ -3,7 +3,6 @@
 #include "plugin-settings.hpp"
 #include "qt-display.hpp"
 #include "recording-automation.hpp"
-#include "audio-mixer-panel.hpp"
 #include "vertical-outputs.hpp"
 
 #include <graphics/matrix4.h>
@@ -22,7 +21,6 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
-#include <QSlider>
 #include <QSpinBox>
 #include <QString>
 #include <QVBoxLayout>
@@ -59,6 +57,12 @@ protected:
 	EventFilterFunc filter;
 };
 
+/**
+ * Shared vertical workspace controller + canvas dock.
+ *
+ * Owns vertical scenes, preview/view, outputs, automation, settings, and hotkeys.
+ * Companion docks (Scenes / Sources / Transitions) call the public Request*/Populate* API.
+ */
 class ShortsDock : public QFrame {
 	Q_OBJECT
 
@@ -68,6 +72,51 @@ public:
 
 	void SaveSettings(obs_data_t *data);
 	void LoadSettings(obs_data_t *data);
+
+	/* --- Public API for companion docks --- */
+	void RequestAddScene();
+	void RequestRemoveScene();
+	void RequestDuplicateScene();
+	void RequestRenameScene();
+	void RequestSelectScene(const QString &uuid);
+	void PopulateScenesList(QListWidget *list);
+
+	void RequestAddSource();
+	void RequestRemoveSource();
+	void RequestToggleSourceVisible();
+	void RequestToggleSourceLock();
+	void RequestSourceProperties();
+	void RequestSourceFilters();
+	void RequestSourceMoveUp();
+	void RequestSourceMoveDown();
+	void RequestSelectSource(qint64 itemId);
+	void PopulateSourcesList(QListWidget *list);
+
+	void RequestFitToScreen();
+	void RequestStretchToScreen();
+	void RequestCenterToScreen();
+	void RequestResetTransform();
+	void RequestTransformEdited(double x, double y, double w, double h, double rot);
+	void PopulateTransformControls(QDoubleSpinBox *x, QDoubleSpinBox *y, QDoubleSpinBox *w, QDoubleSpinBox *h,
+				       QDoubleSpinBox *rot);
+
+	void RequestSetTransition(const QString &name);
+	void RequestSetTransitionDuration(int ms);
+	void RequestPreviewTransition();
+	void RequestTriggerTransition();
+	void PopulateTransitions(QComboBox *combo, QSpinBox *duration);
+
+	void CollectSceneLists(QStringList &names, QStringList &uuids) const;
+	VerticalOutputs *Outputs() const { return outputs.get(); }
+	const vsp::PluginSettings &Settings() const { return settings; }
+	vsp::AutomationStatus CurrentAutomationStatus() const;
+	QString CurrentAutomationStatusText() const;
+
+signals:
+	void verticalScenesChanged();
+	void verticalSourcesChanged();
+	void verticalTransitionsChanged();
+	void verticalTransformChanged();
 
 public slots:
 	void HotkeySaveShortClip();
@@ -80,42 +129,15 @@ public slots:
 	void HotkeyOpenSettings();
 
 private slots:
-	void OnSceneSelectionChanged();
-	void OnAddScene();
-	void OnRemoveScene();
-	void OnDuplicateScene();
-	void OnRenameScene();
-	void OnSourceSelectionChanged();
-	void OnAddSource();
-	void OnRemoveSource();
-	void OnToggleSourceVisible();
-	void OnToggleSourceLock();
-	void OnSourceProperties();
-	void OnSourceFilters();
-	void OnSourceMoveUp();
-	void OnSourceMoveDown();
-	void OnFitToScreen();
-	void OnStretchToScreen();
-	void OnCenterToScreen();
-	void OnResetTransform();
-	void OnTransformEdited();
-	void OnTransitionChanged(int index);
-	void OnTransitionDurationChanged(int value);
 	void OnGoLive();
 	void OnRecord();
 	void OnShortClip();
 	void OnLongClip();
 	void OnSettings();
 	void OpenSettingsStreaming(bool focusStreaming = true);
-	void RefreshScenesList();
-	void RefreshSourcesList();
-	void RefreshMixer();
-	void RefreshTransitions();
-	void RefreshTransformControls();
 	void OnStreamingChanged(bool active);
 	void OnRecordingChanged(bool active);
 	void OnClipSaved(const QString &path, ClipKind kind);
-	void SyncActiveSceneFromFrontend();
 	void OnAutomationStatus(vsp::AutomationStatus status, const QString &text);
 	void OnAutomationNotify(const QString &title, const QString &message);
 	void OnBufferStatus(BufferStatus status, const QString &text);
@@ -123,23 +145,23 @@ private slots:
 
 private:
 	void BuildUI();
+	void EnsureDefaultVerticalScene();
 	void RefreshVerticalWorkspace(bool force = false);
 	void ApplyCanvasFromSettings();
 	void CreateView();
 	void DestroyView();
 	void SetCanvasSize(uint32_t width, uint32_t height);
-	void SetActiveScene(obs_scene_t *newScene, bool isVerticalMirror);
-	obs_scene_t *EnsureVerticalMirror(obs_source_t *mainSceneSource);
-	void SyncMirrorFromMain(obs_scene_t *mirror, obs_scene_t *mainScene);
-	obs_scene_t *ActiveEditScene() const { return scene; }
-	uint32_t ActiveCanvasWidth() const { return verticalWidth; }
-	uint32_t ActiveCanvasHeight() const { return verticalHeight; }
+	void SetActiveScene(obs_scene_t *newScene, bool withTransition);
+	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;
+	QString ActiveSceneUuid() const;
 	void HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind);
-	void CollectSceneLists(QStringList &names, QStringList &uuids) const;
 	void RegisterHotkeys();
 	void UnregisterHotkeys();
 	void SaveHotkeys(obs_data_t *data) const;
 	void LoadHotkeys(obs_data_t *data);
+	void EmitSceneUiChanged();
+	void EmitSourceUiChanged();
+	obs_source_t *EnsureVerticalTransitionSource(const QString &name);
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -161,41 +183,34 @@ private:
 	static void FrontendEvent(enum obs_frontend_event event, void *private_data);
 	static void HotkeyThunk(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 
-	/* UI */
+	/* Canvas + toolbar UI only */
 	OBSQTDisplay *preview = nullptr;
 	std::unique_ptr<OBSEventFilter> previewEventFilter;
-	QWidget *controlsOverlay = nullptr;
+	QWidget *controlsBar = nullptr;
 	QPushButton *goLiveBtn = nullptr;
 	QPushButton *recordBtn = nullptr;
 	QPushButton *shortClipBtn = nullptr;
 	QPushButton *longClipBtn = nullptr;
 	QPushButton *settingsBtn = nullptr;
-	QLabel *autoIndicator = nullptr;
 
-	QListWidget *scenesList = nullptr;
-	QListWidget *sourcesList = nullptr;
-	AudioMixerPanel *mixerPanel = nullptr;
-	QComboBox *transitionCombo = nullptr;
-	QSpinBox *transitionDuration = nullptr;
-	QLabel *bufferStatusLabel = nullptr;
-
-	QDoubleSpinBox *posXSpin = nullptr;
-	QDoubleSpinBox *posYSpin = nullptr;
-	QDoubleSpinBox *sizeWSpin = nullptr;
-	QDoubleSpinBox *sizeHSpin = nullptr;
-	QDoubleSpinBox *rotSpin = nullptr;
-
-	/* State */
+	/* Shared state */
 	vsp::PluginSettings settings;
 	std::unique_ptr<VerticalOutputs> outputs;
 	std::unique_ptr<RecordingAutomation> automation;
 	bool recordingStartedManually = false;
+	QString automationStatusText;
+	vsp::AutomationStatus automationStatus = vsp::AutomationStatus::Disabled;
 
 	obs_view_t *view = nullptr;
 	video_t *video = nullptr;
 	obs_scene_t *scene = nullptr;
-	bool sceneIsMirror = false;
-	QMap<QString, OBSScene> verticalMirrors;
+	QMap<QString, OBSScene> verticalScenes; /* uuid -> private vertical scene */
+	QStringList sceneOrder;                 /* ordered uuids */
+
+	QString verticalTransitionName;
+	int verticalTransitionDurationMs = 300;
+	OBSSource verticalTransition; /* private transition source for vertical only */
+	OBSSource transitionPreviewScene;
 
 	uint32_t verticalWidth = 1080;
 	uint32_t verticalHeight = 1920;

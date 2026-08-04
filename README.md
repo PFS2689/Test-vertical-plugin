@@ -13,14 +13,17 @@ Professional Vertical Streaming Plugin for OBS Studio — vertical production do
 
 ## UI overview
 
-Dock title: **Vertical Shorts**
+Native OBS docks (View → Docks):
 
-- Vertical-only workspace (main OBS remains the horizontal production canvas)
-- OBS-style panels: Scenes, Sources, Audio Mixer (real meters), Transitions
-- Canvas controls (bottom-right): 🟢 Go Live · ⏺️ Record · 📸 Short Clip · 📷 Long Clip · ⚙️ Settings
-- Vertical transforms are stored on private mirror scenes so your main OBS canvas is not overwritten
+- **Vertical Shorts** — large vertical canvas + Go Live / Record / Short Clip / Long Clip / Settings
+- **Vertical Scenes** — vertical-only scene list (does not change horizontal Scenes)
+- **Vertical Sources** — sources/transform for the active vertical scene only
+- **Vertical Transitions** — vertical transition type, duration, preview/trigger
+
+Settings uses an OBS-style dialog (pages left, categories right, OK / Cancel / Apply) with General, Vertical Canvas, Vertical Recording, Vertical Clips, Recording Automation, Vertical Streaming, Audio, Hotkeys, Advanced, and About.
+
 - **Independent Vertical Streaming Destination** (YouTube / Twitch / TikTok / Instagram / Custom RTMP) — never inherits the main OBS stream key or service
-- Clip-buffer readiness status, recording automation, and hotkeys
+- Clip buffer, recording automation, and hotkeys
 
 ## Install / test
 
@@ -29,8 +32,8 @@ Dock title: **Vertical Shorts**
    (OBS does **not** load plugins from `%APPDATA%\obs-studio\plugins` on Windows).
 2. Open OBS Studio **32.2.1**.
 3. If needed, enable **Vertical Shorts Plugin** in **Tools → Plugin Manager**, then restart OBS.
-4. Go to **View → Docks → Vertical Shorts** (also **Tools → Vertical Shorts**).
-5. Open **⚙️ Settings → Vertical Streaming** and configure a Vertical Streaming Destination with a vertical-only server URL and stream key from the platform dashboard.
+4. Open **View → Docks** and enable Vertical Shorts / Scenes / Sources / Transitions as needed.
+5. Open **Settings → Vertical Streaming** and configure a Vertical Streaming Destination.
 6. Confirm the main OBS canvas and main stream settings remain unchanged.
 7. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
 8. Confirm output files save to the selected vertical recording path.

@@ -50,6 +50,12 @@ target_sources(
     src/plugin-main.cpp
     src/shorts-dock.cpp
     src/shorts-dock.hpp
+    src/vertical-scenes-dock.cpp
+    src/vertical-scenes-dock.hpp
+    src/vertical-sources-dock.cpp
+    src/vertical-sources-dock.hpp
+    src/vertical-transitions-dock.cpp
+    src/vertical-transitions-dock.hpp
     src/plugin-settings.hpp
     src/stream-destination.hpp
     src/credential-store.cpp
