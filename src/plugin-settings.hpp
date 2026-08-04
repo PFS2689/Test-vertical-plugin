@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <cstdint>
 
 #ifdef VSP_SETTINGS_TEST
@@ -13,7 +14,9 @@
 
 namespace vsp {
 
-enum class WorkspaceLayout { Vertical = 0, Horizontal = 1 };
+/* Safety ceiling for the shared vertical clip buffer (15 minutes). */
+constexpr int kMaxClipBufferSeconds = 900;
+constexpr int kMemoryWarnClipSeconds = 300; /* warn when custom exceeds 5 minutes */
 
 enum class CanvasPreset {
 	YouTubeVertical = 0,
@@ -23,17 +26,93 @@ enum class CanvasPreset {
 	Custom = 4,
 };
 
-enum class ClipLengthPreset { Sec10 = 10, Sec20 = 20, Sec30 = 30, Sec60 = 60, Custom = 0 };
+enum class ShortClipPreset { Sec10 = 10, Sec20 = 20, Sec30 = 30, Sec60 = 60, Custom = 0 };
+enum class LongClipPreset { Min2 = 120, Min3 = 180, Min4 = 240, Min5 = 300, Custom = 0 };
+
+enum class ScheduleRepeat { Once = 0, Daily = 1, Weekly = 2, Weekdays = 3 };
+
+enum class AutomationStatus {
+	Disabled = 0,
+	Waiting,
+	Scheduled,
+	Starting,
+	Recording,
+	Stopping,
+	Completed,
+	Error,
+};
+
+inline QString AutomationStatusLabel(AutomationStatus s)
+{
+	switch (s) {
+	case AutomationStatus::Disabled:
+		return QStringLiteral("Automation disabled");
+	case AutomationStatus::Waiting:
+		return QStringLiteral("Waiting for trigger");
+	case AutomationStatus::Scheduled:
+		return QStringLiteral("Scheduled");
+	case AutomationStatus::Starting:
+		return QStringLiteral("Starting");
+	case AutomationStatus::Recording:
+		return QStringLiteral("Recording");
+	case AutomationStatus::Stopping:
+		return QStringLiteral("Stopping");
+	case AutomationStatus::Completed:
+		return QStringLiteral("Completed");
+	case AutomationStatus::Error:
+		return QStringLiteral("Error");
+	}
+	return QStringLiteral("Unknown");
+}
 
 struct PluginSettings {
-	WorkspaceLayout layout = WorkspaceLayout::Vertical;
 	CanvasPreset canvasPreset = CanvasPreset::YouTubeVertical;
 	uint32_t customWidth = 1080;
 	uint32_t customHeight = 1920;
-	ClipLengthPreset clipPreset = ClipLengthPreset::Sec30;
-	int customClipSeconds = 45;
+
+	/* Short clip (📸) — independent from long clip */
+	ShortClipPreset shortClipPreset = ShortClipPreset::Sec30;
+	int customShortClipSeconds = 45;
+
+	/* Long clip (📷) — independent from short clip */
+	LongClipPreset longClipPreset = LongClipPreset::Min2;
+	int customLongClipSeconds = 150; /* 2:30 default custom */
+
 	QString recordingPath; /* empty => use OBS default when available */
 	bool clipBufferEnabled = true;
+
+	/* Vertical Recording Automation (disabled by default) */
+	bool automationEnabled = false;
+
+	bool autoStartOnMainStream = false;
+	bool autoStartOnScene = false;
+	bool autoStartOnObsStart = false;
+	bool autoStartOnSchedule = false;
+	bool autoStartOnCountdown = false;
+	bool autoStartOnVerticalLive = false;
+
+	bool autoStopOnMainStreamStop = false;
+	bool autoStopOnSceneInactive = false;
+	bool autoStopOnDuration = false;
+	bool autoStopOnScheduleEnd = false;
+	bool autoStopOnVerticalLiveStop = false;
+	bool autoStopOnObsShutdown = true;
+
+	QString triggerSceneUuid;
+	QString triggerSceneName;
+
+	int autoRecordDurationSeconds = 3600; /* 1 hour default when duration stop enabled */
+	int countdownSeconds = 60;
+
+	/* Schedule stored as local ISO date/time strings */
+	QString scheduleStartDate; /* yyyy-MM-dd */
+	QString scheduleStartTime; /* HH:mm */
+	QString scheduleEndDate;
+	QString scheduleEndTime;
+	ScheduleRepeat scheduleRepeat = ScheduleRepeat::Once;
+	int scheduleWeekdaysMask = 0; /* bit0=Mon ... bit6=Sun */
+
+	bool confirmManualStopDuringAutomation = true;
 };
 
 inline void CanvasSizeForPreset(CanvasPreset preset, uint32_t customW, uint32_t customH, uint32_t &outW,
@@ -55,11 +134,30 @@ inline void CanvasSizeForPreset(CanvasPreset preset, uint32_t customW, uint32_t 
 	}
 }
 
-inline int EffectiveClipSeconds(const PluginSettings &s)
+inline int EffectiveShortClipSeconds(const PluginSettings &s)
 {
-	if (s.clipPreset == ClipLengthPreset::Custom)
-		return s.customClipSeconds;
-	return static_cast<int>(s.clipPreset);
+	if (s.shortClipPreset == ShortClipPreset::Custom)
+		return s.customShortClipSeconds;
+	return static_cast<int>(s.shortClipPreset);
+}
+
+inline int EffectiveLongClipSeconds(const PluginSettings &s)
+{
+	if (s.longClipPreset == LongClipPreset::Custom)
+		return s.customLongClipSeconds;
+	return static_cast<int>(s.longClipPreset);
+}
+
+inline int RequiredBufferSeconds(const PluginSettings &s)
+{
+	const int shortSec = EffectiveShortClipSeconds(s);
+	const int longSec = EffectiveLongClipSeconds(s);
+	int needed = shortSec > longSec ? shortSec : longSec;
+	if (needed < 60)
+		needed = 60;
+	if (needed > kMaxClipBufferSeconds)
+		needed = kMaxClipBufferSeconds;
+	return needed;
 }
 
 inline bool ValidateCanvasSize(int w, int h, QString *error)
@@ -77,16 +175,118 @@ inline bool ValidateCanvasSize(int w, int h, QString *error)
 	return true;
 }
 
-inline bool ValidateClipSeconds(int seconds, QString *error)
+inline bool ValidateShortClipSeconds(int seconds, QString *error)
 {
 	if (seconds < 1) {
 		if (error)
-			*error = QStringLiteral("Clip length must be at least 1 second.");
+			*error = QStringLiteral("Short clip length must be at least 1 second.");
 		return false;
 	}
-	if (seconds > 600) {
+	if (seconds > kMaxClipBufferSeconds) {
 		if (error)
-			*error = QStringLiteral("Clip length cannot exceed 600 seconds.");
+			*error = QStringLiteral("Short clip length cannot exceed %1 seconds (%2 minutes).")
+					 .arg(kMaxClipBufferSeconds)
+					 .arg(kMaxClipBufferSeconds / 60);
+		return false;
+	}
+	return true;
+}
+
+inline bool ValidateLongClipSeconds(int seconds, QString *error, QString *warning = nullptr)
+{
+	if (seconds < 1) {
+		if (error)
+			*error = QStringLiteral("Long clip length must be at least 1 second.");
+		return false;
+	}
+	if (seconds > kMaxClipBufferSeconds) {
+		if (error)
+			*error = QStringLiteral(
+					 "Long clip length cannot exceed the safe buffer limit of %1 seconds (%2 minutes).")
+					 .arg(kMaxClipBufferSeconds)
+					 .arg(kMaxClipBufferSeconds / 60);
+		return false;
+	}
+	if (warning && seconds >= kMemoryWarnClipSeconds) {
+		*warning = QStringLiteral(
+			"Durations of %1 seconds or more may require substantial memory, disk activity, "
+			"and encoder resources for the vertical clip buffer.")
+				   .arg(kMemoryWarnClipSeconds);
+	}
+	return true;
+}
+
+/* Backward-compatible alias used by older tests */
+inline bool ValidateClipSeconds(int seconds, QString *error)
+{
+	return ValidateShortClipSeconds(seconds, error);
+}
+
+inline int ParseMmSs(const QString &text, QString *error)
+{
+	const QString t = text.trimmed();
+	if (t.isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Duration cannot be empty.");
+		return -1;
+	}
+	/* Accept MM:SS or total seconds as digits */
+	if (t.contains(QLatin1Char(':'))) {
+		const QStringList parts = t.split(QLatin1Char(':'));
+		if (parts.size() != 2) {
+			if (error)
+				*error = QStringLiteral("Use MM:SS format (for example 2:30).");
+			return -1;
+		}
+		bool okM = false;
+		bool okS = false;
+		const int m = parts[0].trimmed().toInt(&okM);
+		const int s = parts[1].trimmed().toInt(&okS);
+		if (!okM || !okS || m < 0 || s < 0 || s > 59) {
+			if (error)
+				*error = QStringLiteral("Invalid time value. Use minutes and seconds (MM:SS).");
+			return -1;
+		}
+		const int total = m * 60 + s;
+		if (total < 1) {
+			if (error)
+				*error = QStringLiteral("Duration must be greater than zero.");
+			return -1;
+		}
+		return total;
+	}
+	for (QChar c : t) {
+		if (!c.isDigit()) {
+			if (error)
+				*error = QStringLiteral("Enter a duration as MM:SS or whole seconds (digits only).");
+			return -1;
+		}
+	}
+	bool ok = false;
+	const int sec = t.toInt(&ok);
+	if (!ok) {
+		if (error)
+			*error = QStringLiteral("Enter a duration as MM:SS or whole seconds (digits only).");
+		return -1;
+	}
+	if (sec < 1) {
+		if (error)
+			*error = QStringLiteral("Duration must be greater than zero.");
+		return -1;
+	}
+	return sec;
+}
+
+inline bool ValidateAutoDurationSeconds(int seconds, QString *error)
+{
+	if (seconds < 1) {
+		if (error)
+			*error = QStringLiteral("Recording duration must be at least 1 second.");
+		return false;
+	}
+	if (seconds > 24 * 3600) {
+		if (error)
+			*error = QStringLiteral("Recording duration cannot exceed 24 hours.");
 		return false;
 	}
 	return true;
@@ -137,14 +337,50 @@ inline PluginSettings LoadSettingsFromData(void *, uint32_t &canvasW, uint32_t &
 #else
 inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32_t canvasW, uint32_t canvasH)
 {
-	obs_data_set_int(data, "workspace_layout", static_cast<int>(s.layout));
 	obs_data_set_int(data, "canvas_preset", static_cast<int>(s.canvasPreset));
 	obs_data_set_int(data, "custom_width", s.customWidth);
 	obs_data_set_int(data, "custom_height", s.customHeight);
-	obs_data_set_int(data, "clip_preset", static_cast<int>(s.clipPreset));
-	obs_data_set_int(data, "custom_clip_seconds", s.customClipSeconds);
+
+	obs_data_set_int(data, "short_clip_preset", static_cast<int>(s.shortClipPreset));
+	obs_data_set_int(data, "custom_short_clip_seconds", s.customShortClipSeconds);
+	obs_data_set_int(data, "long_clip_preset", static_cast<int>(s.longClipPreset));
+	obs_data_set_int(data, "custom_long_clip_seconds", s.customLongClipSeconds);
+
+	/* Keep legacy keys in sync for older readers */
+	obs_data_set_int(data, "clip_preset", static_cast<int>(s.shortClipPreset));
+	obs_data_set_int(data, "custom_clip_seconds", s.customShortClipSeconds);
+
 	obs_data_set_string(data, "recording_path", s.recordingPath.toUtf8().constData());
 	obs_data_set_bool(data, "clip_buffer_enabled", s.clipBufferEnabled);
+
+	obs_data_set_bool(data, "automation_enabled", s.automationEnabled);
+	obs_data_set_bool(data, "auto_start_main_stream", s.autoStartOnMainStream);
+	obs_data_set_bool(data, "auto_start_scene", s.autoStartOnScene);
+	obs_data_set_bool(data, "auto_start_obs_start", s.autoStartOnObsStart);
+	obs_data_set_bool(data, "auto_start_schedule", s.autoStartOnSchedule);
+	obs_data_set_bool(data, "auto_start_countdown", s.autoStartOnCountdown);
+	obs_data_set_bool(data, "auto_start_vertical_live", s.autoStartOnVerticalLive);
+
+	obs_data_set_bool(data, "auto_stop_main_stream", s.autoStopOnMainStreamStop);
+	obs_data_set_bool(data, "auto_stop_scene_inactive", s.autoStopOnSceneInactive);
+	obs_data_set_bool(data, "auto_stop_duration", s.autoStopOnDuration);
+	obs_data_set_bool(data, "auto_stop_schedule_end", s.autoStopOnScheduleEnd);
+	obs_data_set_bool(data, "auto_stop_vertical_live", s.autoStopOnVerticalLiveStop);
+	obs_data_set_bool(data, "auto_stop_obs_shutdown", s.autoStopOnObsShutdown);
+
+	obs_data_set_string(data, "trigger_scene_uuid", s.triggerSceneUuid.toUtf8().constData());
+	obs_data_set_string(data, "trigger_scene_name", s.triggerSceneName.toUtf8().constData());
+	obs_data_set_int(data, "auto_record_duration_seconds", s.autoRecordDurationSeconds);
+	obs_data_set_int(data, "countdown_seconds", s.countdownSeconds);
+
+	obs_data_set_string(data, "schedule_start_date", s.scheduleStartDate.toUtf8().constData());
+	obs_data_set_string(data, "schedule_start_time", s.scheduleStartTime.toUtf8().constData());
+	obs_data_set_string(data, "schedule_end_date", s.scheduleEndDate.toUtf8().constData());
+	obs_data_set_string(data, "schedule_end_time", s.scheduleEndTime.toUtf8().constData());
+	obs_data_set_int(data, "schedule_repeat", static_cast<int>(s.scheduleRepeat));
+	obs_data_set_int(data, "schedule_weekdays_mask", s.scheduleWeekdaysMask);
+	obs_data_set_bool(data, "confirm_manual_stop_automation", s.confirmManualStopDuringAutomation);
+
 	obs_data_set_int(data, "width", canvasW);
 	obs_data_set_int(data, "height", canvasH);
 }
@@ -152,30 +388,86 @@ inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32
 inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, uint32_t &canvasH)
 {
 	PluginSettings s;
-	s.layout = static_cast<WorkspaceLayout>(obs_data_get_int(data, "workspace_layout"));
 	s.canvasPreset = static_cast<CanvasPreset>(obs_data_get_int(data, "canvas_preset"));
 	s.customWidth = (uint32_t)obs_data_get_int(data, "custom_width");
 	s.customHeight = (uint32_t)obs_data_get_int(data, "custom_height");
-	s.clipPreset = static_cast<ClipLengthPreset>(obs_data_get_int(data, "clip_preset"));
-	s.customClipSeconds = (int)obs_data_get_int(data, "custom_clip_seconds");
+
+	if (obs_data_has_user_value(data, "short_clip_preset")) {
+		s.shortClipPreset = static_cast<ShortClipPreset>(obs_data_get_int(data, "short_clip_preset"));
+		s.customShortClipSeconds = (int)obs_data_get_int(data, "custom_short_clip_seconds");
+	} else {
+		/* Migrate legacy clip_* keys */
+		s.shortClipPreset = static_cast<ShortClipPreset>(obs_data_get_int(data, "clip_preset"));
+		s.customShortClipSeconds = (int)obs_data_get_int(data, "custom_clip_seconds");
+	}
+
+	if (obs_data_has_user_value(data, "long_clip_preset")) {
+		s.longClipPreset = static_cast<LongClipPreset>(obs_data_get_int(data, "long_clip_preset"));
+		s.customLongClipSeconds = (int)obs_data_get_int(data, "custom_long_clip_seconds");
+	}
+
 	s.recordingPath = QString::fromUtf8(obs_data_get_string(data, "recording_path"));
 	s.clipBufferEnabled = obs_data_has_user_value(data, "clip_buffer_enabled")
 				      ? obs_data_get_bool(data, "clip_buffer_enabled")
 				      : true;
 
+	s.automationEnabled = obs_data_get_bool(data, "automation_enabled");
+	s.autoStartOnMainStream = obs_data_get_bool(data, "auto_start_main_stream");
+	s.autoStartOnScene = obs_data_get_bool(data, "auto_start_scene");
+	s.autoStartOnObsStart = obs_data_get_bool(data, "auto_start_obs_start");
+	s.autoStartOnSchedule = obs_data_get_bool(data, "auto_start_schedule");
+	s.autoStartOnCountdown = obs_data_get_bool(data, "auto_start_countdown");
+	s.autoStartOnVerticalLive = obs_data_get_bool(data, "auto_start_vertical_live");
+
+	s.autoStopOnMainStreamStop = obs_data_get_bool(data, "auto_stop_main_stream");
+	s.autoStopOnSceneInactive = obs_data_get_bool(data, "auto_stop_scene_inactive");
+	s.autoStopOnDuration = obs_data_get_bool(data, "auto_stop_duration");
+	s.autoStopOnScheduleEnd = obs_data_get_bool(data, "auto_stop_schedule_end");
+	s.autoStopOnVerticalLiveStop = obs_data_get_bool(data, "auto_stop_vertical_live");
+	s.autoStopOnObsShutdown = obs_data_has_user_value(data, "auto_stop_obs_shutdown")
+					  ? obs_data_get_bool(data, "auto_stop_obs_shutdown")
+					  : true;
+
+	s.triggerSceneUuid = QString::fromUtf8(obs_data_get_string(data, "trigger_scene_uuid"));
+	s.triggerSceneName = QString::fromUtf8(obs_data_get_string(data, "trigger_scene_name"));
+	s.autoRecordDurationSeconds = (int)obs_data_get_int(data, "auto_record_duration_seconds");
+	s.countdownSeconds = (int)obs_data_get_int(data, "countdown_seconds");
+
+	s.scheduleStartDate = QString::fromUtf8(obs_data_get_string(data, "schedule_start_date"));
+	s.scheduleStartTime = QString::fromUtf8(obs_data_get_string(data, "schedule_start_time"));
+	s.scheduleEndDate = QString::fromUtf8(obs_data_get_string(data, "schedule_end_date"));
+	s.scheduleEndTime = QString::fromUtf8(obs_data_get_string(data, "schedule_end_time"));
+	s.scheduleRepeat = static_cast<ScheduleRepeat>(obs_data_get_int(data, "schedule_repeat"));
+	s.scheduleWeekdaysMask = (int)obs_data_get_int(data, "schedule_weekdays_mask");
+	s.confirmManualStopDuringAutomation = obs_data_has_user_value(data, "confirm_manual_stop_automation")
+						      ? obs_data_get_bool(data, "confirm_manual_stop_automation")
+						      : true;
+
 	if (s.customWidth == 0)
 		s.customWidth = 1080;
 	if (s.customHeight == 0)
 		s.customHeight = 1920;
-	if (s.customClipSeconds <= 0)
-		s.customClipSeconds = 45;
-	if (s.clipPreset != ClipLengthPreset::Custom && s.clipPreset != ClipLengthPreset::Sec10 &&
-	    s.clipPreset != ClipLengthPreset::Sec20 && s.clipPreset != ClipLengthPreset::Sec30 &&
-	    s.clipPreset != ClipLengthPreset::Sec60) {
-		s.clipPreset = ClipLengthPreset::Sec30;
-	}
-	if (s.layout != WorkspaceLayout::Horizontal)
-		s.layout = WorkspaceLayout::Vertical;
+	if (s.customShortClipSeconds <= 0)
+		s.customShortClipSeconds = 45;
+	if (s.customLongClipSeconds <= 0)
+		s.customLongClipSeconds = 150;
+	if (s.autoRecordDurationSeconds <= 0)
+		s.autoRecordDurationSeconds = 3600;
+	if (s.countdownSeconds <= 0)
+		s.countdownSeconds = 60;
+
+	auto validShort = [](ShortClipPreset p) {
+		return p == ShortClipPreset::Custom || p == ShortClipPreset::Sec10 || p == ShortClipPreset::Sec20 ||
+		       p == ShortClipPreset::Sec30 || p == ShortClipPreset::Sec60;
+	};
+	auto validLong = [](LongClipPreset p) {
+		return p == LongClipPreset::Custom || p == LongClipPreset::Min2 || p == LongClipPreset::Min3 ||
+		       p == LongClipPreset::Min4 || p == LongClipPreset::Min5;
+	};
+	if (!validShort(s.shortClipPreset))
+		s.shortClipPreset = ShortClipPreset::Sec30;
+	if (!validLong(s.longClipPreset))
+		s.longClipPreset = LongClipPreset::Min2;
 
 	canvasW = (uint32_t)obs_data_get_int(data, "width");
 	canvasH = (uint32_t)obs_data_get_int(data, "height");

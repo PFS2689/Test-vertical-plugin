@@ -327,16 +327,13 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	vsp::CanvasSizeForPreset(settings.canvasPreset, settings.customWidth, settings.customHeight, verticalWidth,
 				 verticalHeight);
 
-	struct obs_video_info ovi;
-	if (obs_get_video_info(&ovi)) {
-		horizontalWidth = ovi.base_width;
-		horizontalHeight = ovi.base_height;
-	}
-
 	outputs = std::make_unique<VerticalOutputs>(this);
+	automation = std::make_unique<RecordingAutomation>(outputs.get(), this);
 	connect(outputs.get(), &VerticalOutputs::streamingChanged, this, &ShortsDock::OnStreamingChanged);
 	connect(outputs.get(), &VerticalOutputs::recordingChanged, this, &ShortsDock::OnRecordingChanged);
 	connect(outputs.get(), &VerticalOutputs::clipSaved, this, &ShortsDock::OnClipSaved);
+	connect(automation.get(), &RecordingAutomation::statusChanged, this, &ShortsDock::OnAutomationStatus);
+	connect(automation.get(), &RecordingAutomation::notify, this, &ShortsDock::OnAutomationNotify);
 
 	BuildUI();
 	CreateView();
@@ -344,10 +341,13 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 		outputs->SetVideo(video);
 		outputs->ApplySettings(settings);
 	}
+	if (automation)
+		automation->ApplySettings(settings);
 
 	obs_frontend_add_event_callback(FrontendEvent, this);
+	RegisterHotkeys();
 
-	ApplyWorkspaceLayout(settings.layout, true);
+	RefreshVerticalWorkspace(true);
 	RefreshScenesList();
 	RefreshTransitions();
 	RefreshMixer();
@@ -363,7 +363,12 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 ShortsDock::~ShortsDock()
 {
 	obs_frontend_remove_event_callback(FrontendEvent, this);
+	UnregisterHotkeys();
 	clearing = true;
+	shuttingDown = true;
+
+	if (automation)
+		automation->OnObsShutdown();
 
 	if (outputs)
 		outputs->StopAll();
@@ -395,13 +400,15 @@ void ShortsDock::BuildUI()
 	root->setContentsMargins(6, 6, 6, 6);
 	root->setSpacing(6);
 
-	workspaceCombo = new QComboBox(this);
-	workspaceCombo->addItem(Translate("WorkspaceVertical"), (int)vsp::WorkspaceLayout::Vertical);
-	workspaceCombo->addItem(Translate("WorkspaceHorizontal"), (int)vsp::WorkspaceLayout::Horizontal);
-	workspaceCombo->setCurrentIndex(0);
-	connect(workspaceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&ShortsDock::OnWorkspaceChanged);
-	root->addWidget(workspaceCombo);
+	auto *workspaceHint = new QLabel(Translate("VerticalWorkspaceHint"), this);
+	workspaceHint->setWordWrap(true);
+	workspaceHint->setStyleSheet(QStringLiteral("color: #aaa; font-size: 11px;"));
+	root->addWidget(workspaceHint);
+
+	autoIndicator = new QLabel(this);
+	autoIndicator->setVisible(false);
+	autoIndicator->setStyleSheet(QStringLiteral("color: #f0c040; font-size: 11px;"));
+	root->addWidget(autoIndicator);
 
 	auto *splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -544,17 +551,28 @@ void ShortsDock::BuildUI()
 	recordBtn->setToolTip(Translate("RecordTip"));
 	connect(recordBtn, &QPushButton::clicked, this, &ShortsDock::OnRecord);
 
-	clipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8 ") + Translate("Clip"), controlsOverlay);
-	clipBtn->setToolTip(Translate("ClipTip"));
-	connect(clipBtn, &QPushButton::clicked, this, &ShortsDock::OnClip);
+	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8 ") + Translate("ShortClip"), controlsOverlay);
+	shortClipBtn->setAccessibleName(Translate("ShortClip"));
+	shortClipBtn->setToolTip(Translate("ShortClipTip"));
+	connect(shortClipBtn, &QPushButton::clicked, this, &ShortsDock::OnShortClip);
+
+	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7 ") + Translate("LongClip"), controlsOverlay);
+	longClipBtn->setAccessibleName(Translate("LongClip"));
+	longClipBtn->setToolTip(Translate("LongClipTip"));
+	connect(longClipBtn, &QPushButton::clicked, this, &ShortsDock::OnLongClip);
 
 	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F ") + Translate("Settings"), controlsOverlay);
+	settingsBtn->setAccessibleName(Translate("Settings"));
 	settingsBtn->setToolTip(Translate("SettingsTip"));
 	connect(settingsBtn, &QPushButton::clicked, this, &ShortsDock::OnSettings);
 
+	goLiveBtn->setAccessibleName(Translate("GoLive"));
+	recordBtn->setAccessibleName(Translate("Record"));
+
 	overlayLayout->addWidget(goLiveBtn);
 	overlayLayout->addWidget(recordBtn);
-	overlayLayout->addWidget(clipBtn);
+	overlayLayout->addWidget(shortClipBtn);
+	overlayLayout->addWidget(longClipBtn);
 	overlayLayout->addWidget(settingsBtn);
 	controlsOverlay->setStyleSheet(
 		QStringLiteral("QWidget#vsControlsOverlay { background: rgba(0,0,0,140); border-radius: 6px; }"
@@ -612,18 +630,9 @@ void ShortsDock::ApplyCanvasFromSettings()
 				 verticalHeight);
 }
 
-void ShortsDock::ApplyWorkspaceLayout(vsp::WorkspaceLayout layout, bool force)
+void ShortsDock::RefreshVerticalWorkspace(bool force)
 {
-	if (!force && settings.layout == layout)
-		return;
-
-	settings.layout = layout;
-
-	struct obs_video_info ovi;
-	if (obs_get_video_info(&ovi)) {
-		horizontalWidth = ovi.base_width;
-		horizontalHeight = ovi.base_height;
-	}
+	UNUSED_PARAMETER(force);
 
 	CreateView();
 	if (outputs)
@@ -631,37 +640,16 @@ void ShortsDock::ApplyWorkspaceLayout(vsp::WorkspaceLayout layout, bool force)
 
 	obs_source_t *cur = obs_frontend_get_current_scene();
 	if (cur) {
-		if (layout == vsp::WorkspaceLayout::Vertical) {
-			obs_scene_t *mirror = EnsureVerticalMirror(cur);
-			SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
-			SetActiveScene(mirror, true);
-		} else {
-			SetActiveScene(obs_scene_from_source(cur), false);
-		}
+		obs_scene_t *mirror = EnsureVerticalMirror(cur);
+		SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
+		SetActiveScene(mirror, true);
 		obs_source_release(cur);
 	} else {
 		SetActiveScene(nullptr, false);
 	}
 
-	if (workspaceCombo) {
-		const int idx = (layout == vsp::WorkspaceLayout::Horizontal) ? 1 : 0;
-		workspaceCombo->blockSignals(true);
-		workspaceCombo->setCurrentIndex(idx);
-		workspaceCombo->blockSignals(false);
-	}
-
 	RefreshSourcesList();
 	RefreshTransformControls();
-}
-
-uint32_t ShortsDock::ActiveCanvasWidth() const
-{
-	return settings.layout == vsp::WorkspaceLayout::Horizontal ? horizontalWidth : verticalWidth;
-}
-
-uint32_t ShortsDock::ActiveCanvasHeight() const
-{
-	return settings.layout == vsp::WorkspaceLayout::Horizontal ? horizontalHeight : verticalHeight;
 }
 
 void ShortsDock::CreateView()
@@ -721,11 +709,9 @@ void ShortsDock::SetCanvasSize(uint32_t width, uint32_t height)
 	settings.customWidth = width;
 	settings.customHeight = height;
 
-	if (settings.layout == vsp::WorkspaceLayout::Vertical) {
-		CreateView();
-		if (outputs)
-			outputs->SetVideo(video);
-	}
+	CreateView();
+	if (outputs)
+		outputs->SetVideo(video);
 }
 
 void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool isVerticalMirror)
@@ -835,14 +821,6 @@ void ShortsDock::SyncMirrorFromMain(obs_scene_t *mirror, obs_scene_t *mainScene)
 		mirror);
 }
 
-void ShortsDock::OnWorkspaceChanged(int index)
-{
-	if (loadingSettings || index < 0)
-		return;
-	const auto layout = static_cast<vsp::WorkspaceLayout>(workspaceCombo->itemData(index).toInt());
-	ApplyWorkspaceLayout(layout, true);
-}
-
 void ShortsDock::OnSceneSelectionChanged()
 {
 	if (loadingSettings || clearing)
@@ -859,13 +837,13 @@ void ShortsDock::OnSceneSelectionChanged()
 
 	obs_frontend_set_current_scene(mainSrc);
 
-	if (settings.layout == vsp::WorkspaceLayout::Vertical) {
-		obs_scene_t *mirror = EnsureVerticalMirror(mainSrc);
-		SyncMirrorFromMain(mirror, obs_scene_from_source(mainSrc));
-		SetActiveScene(mirror, true);
-	} else {
-		SetActiveScene(obs_scene_from_source(mainSrc), false);
-	}
+	obs_scene_t *mirror = EnsureVerticalMirror(mainSrc);
+	SyncMirrorFromMain(mirror, obs_scene_from_source(mainSrc));
+	SetActiveScene(mirror, true);
+
+	const QString sceneName = QString::fromUtf8(obs_source_get_name(mainSrc));
+	if (automation)
+		automation->OnSceneChanged(uuid, sceneName);
 
 	obs_source_release(mainSrc);
 }
@@ -1029,22 +1007,13 @@ void ShortsDock::OnAddSource()
 	for (size_t i = 0; i < names.size(); i++) {
 		if (chosen != QString::fromUtf8(names[i].c_str()))
 			continue;
-		obs_sceneitem_t *added = obs_scene_add(mainScene, sources[i]);
-		if (added && settings.layout == vsp::WorkspaceLayout::Horizontal) {
-			obs_scene_enum_items(mainScene, ClearSelection, nullptr);
-			obs_sceneitem_select(added, true);
-		}
+		obs_scene_add(mainScene, sources[i]);
 		break;
 	}
 
-	if (settings.layout == vsp::WorkspaceLayout::Vertical) {
-		obs_scene_t *mirror = EnsureVerticalMirror(current);
-		SyncMirrorFromMain(mirror, mainScene);
-		SetActiveScene(mirror, true);
-	} else {
-		RefreshSourcesList();
-		RefreshTransformControls();
-	}
+	obs_scene_t *mirror = EnsureVerticalMirror(current);
+	SyncMirrorFromMain(mirror, mainScene);
+	SetActiveScene(mirror, true);
 
 	obs_source_release(current);
 }
@@ -1066,7 +1035,7 @@ void ShortsDock::OnRemoveSource()
 	obs_source_t *current = obs_frontend_get_current_scene();
 	obs_scene_t *mainScene = current ? obs_scene_from_source(current) : nullptr;
 
-	if (settings.layout == vsp::WorkspaceLayout::Vertical && mainScene) {
+	if (mainScene) {
 		for (obs_sceneitem_t *item : selected) {
 			obs_source_t *src = obs_sceneitem_get_source(item);
 			obs_sceneitem_t *mainItem = FindItemBySource(mainScene, src);
@@ -1338,6 +1307,19 @@ void ShortsDock::OnRecord()
 	if (!outputs)
 		return;
 	if (outputs->IsRecording()) {
+		if (automation && automation->IsAutomationOwnedRecording() &&
+		    settings.confirmManualStopDuringAutomation) {
+			const auto reply = QMessageBox::question(
+				this, Translate("Record"), Translate("ConfirmStopAutomatedRecording"),
+				QMessageBox::Yes | QMessageBox::No);
+			if (reply != QMessageBox::Yes) {
+				recordBtn->setChecked(true);
+				return;
+			}
+		}
+		recordingStartedManually = false;
+		if (automation)
+			automation->SetManualRecordingActive(false);
 		outputs->StopRecording();
 		return;
 	}
@@ -1345,25 +1327,72 @@ void ShortsDock::OnRecord()
 	if (!outputs->StartRecording(&err)) {
 		recordBtn->setChecked(false);
 		QMessageBox::warning(this, Translate("Record"), err);
+		return;
 	}
+	recordingStartedManually = true;
+	if (automation)
+		automation->SetManualRecordingActive(true);
 }
 
-void ShortsDock::OnClip()
+void ShortsDock::OnShortClip()
 {
 	if (!outputs)
 		return;
-	QString path, err;
-	if (!outputs->SaveClip(&path, &err)) {
-		QMessageBox::warning(this, Translate("Clip"),
-				     QString::fromUtf8(Translate("ClipFailed")).arg(err));
+	HandleClipSaveResult(outputs->SaveShortClip(), ClipKind::Short);
+}
+
+void ShortsDock::OnLongClip()
+{
+	if (!outputs)
+		return;
+	HandleClipSaveResult(outputs->SaveLongClip(), ClipKind::Long);
+}
+
+void ShortsDock::HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind)
+{
+	const QString title = Translate(kind == ClipKind::Long ? "LongClip" : "ShortClip");
+	if (info.result == ClipSaveResult::Ok)
+		return;
+	if (info.result == ClipSaveResult::PartialAvailable) {
+		const auto reply = QMessageBox::question(
+			this, title,
+			info.message + QStringLiteral("
+
+") + Translate("SaveAvailablePortion"),
+			QMessageBox::Yes | QMessageBox::No);
+		if (reply == QMessageBox::Yes && outputs) {
+			const ClipSaveInfo again = outputs->SaveClipOfDuration(info.availableSeconds, kind, true);
+			if (again.result != ClipSaveResult::Ok)
+				QMessageBox::warning(this, title, again.message);
+		}
 		return;
 	}
-	QMessageBox::information(this, Translate("Clip"), QString::fromUtf8(Translate("ClipSaved")).arg(path));
+	QMessageBox::warning(this, title, info.message.isEmpty() ? Translate("ClipFailedGeneric") : info.message);
+}
+
+void ShortsDock::CollectSceneLists(QStringList &names, QStringList &uuids) const
+{
+	names.clear();
+	uuids.clear();
+	obs_frontend_source_list scenes = {};
+	obs_frontend_get_scenes(&scenes);
+	for (size_t i = 0; i < scenes.sources.num; i++) {
+		obs_source_t *src = scenes.sources.array[i];
+		names << QString::fromUtf8(obs_source_get_name(src));
+		const char *u = obs_source_get_uuid(src);
+		uuids << (u ? QString::fromUtf8(u) : QString());
+	}
+	obs_frontend_source_list_free(&scenes);
 }
 
 void ShortsDock::OnSettings()
 {
-	SettingsDialog dlg(settings, outputs.get(), this);
+	QStringList names, uuids;
+	CollectSceneLists(names, uuids);
+	const QString statusText = automation ? automation->StatusText() : QString();
+	const auto status = automation ? automation->Status() : vsp::AutomationStatus::Disabled;
+
+	SettingsDialog dlg(settings, outputs.get(), names, uuids, status, statusText, this);
 	if (dlg.exec() != QDialog::Accepted)
 		return;
 
@@ -1371,14 +1400,30 @@ void ShortsDock::OnSettings()
 	const uint32_t oldH = verticalHeight;
 	settings = dlg.result();
 	ApplyCanvasFromSettings();
-	if (outputs)
-		outputs->ApplySettings(settings);
 
-	const bool sizeChanged = (verticalWidth != oldW || verticalHeight != oldH);
-	if (sizeChanged && settings.layout == vsp::WorkspaceLayout::Vertical) {
+	bool restartBuffer = false;
+	if (outputs)
+		outputs->ApplySettings(settings, &restartBuffer);
+
+	if (dlg.WantsAutomationReset() && automation)
+		automation->ResetRuntimeState();
+	if (automation)
+		automation->ApplySettings(settings);
+
+	if (verticalWidth != oldW || verticalHeight != oldH) {
 		CreateView();
 		if (outputs)
 			outputs->SetVideo(video);
+	}
+
+	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
+		const auto reply = QMessageBox::question(this, Translate("Settings"), Translate("BufferRestartWarning"),
+							 QMessageBox::Yes | QMessageBox::No);
+		if (reply == QMessageBox::Yes) {
+			outputs->StopClipBuffer();
+			QString err;
+			outputs->EnsureClipBuffer(&err);
+		}
 	}
 }
 
@@ -1390,6 +1435,12 @@ void ShortsDock::OnStreamingChanged(bool active)
 	goLiveBtn->setText(QString::fromUtf8(active ? "\U0001F534 " : "\U0001F7E2 ") +
 			   QString::fromUtf8(Translate(active ? "StopGoLive" : "GoLive")));
 	goLiveBtn->setToolTip(Translate(active ? "StopGoLiveTip" : "GoLiveTip"));
+	if (automation) {
+		if (active)
+			automation->OnVerticalLiveStarted();
+		else
+			automation->OnVerticalLiveStopped();
+	}
 }
 
 void ShortsDock::OnRecordingChanged(bool active)
@@ -1400,11 +1451,33 @@ void ShortsDock::OnRecordingChanged(bool active)
 	recordBtn->setText(QString::fromUtf8("\u23FA\uFE0F ") +
 			   QString::fromUtf8(Translate(active ? "StopRecord" : "Record")));
 	recordBtn->setToolTip(Translate(active ? "StopRecordTip" : "RecordTip"));
+	if (!active)
+		recordingStartedManually = false;
+	if (automation) {
+		automation->SetManualRecordingActive(recordingStartedManually && active);
+		automation->OnVerticalRecordingChanged(active);
+	}
 }
 
-void ShortsDock::OnClipSaved(const QString &path)
+void ShortsDock::OnClipSaved(const QString &path, ClipKind kind)
 {
-	UNUSED_PARAMETER(path);
+	const QString title = Translate(kind == ClipKind::Long ? "LongClip" : "ShortClip");
+	QMessageBox::information(this, title, QString::fromUtf8(Translate("ClipSaved")).arg(path));
+}
+
+void ShortsDock::OnAutomationStatus(vsp::AutomationStatus status, const QString &text)
+{
+	if (!autoIndicator)
+		return;
+	const bool show = status == vsp::AutomationStatus::Recording || status == vsp::AutomationStatus::Starting ||
+			  status == vsp::AutomationStatus::Scheduled;
+	autoIndicator->setVisible(show || (status == vsp::AutomationStatus::Waiting && settings.automationEnabled));
+	autoIndicator->setText(text);
+}
+
+void ShortsDock::OnAutomationNotify(const QString &title, const QString &message)
+{
+	QMessageBox::information(this, title, message);
 }
 
 void ShortsDock::RefreshScenesList()
@@ -1627,6 +1700,7 @@ void ShortsDock::RefreshTransformControls()
 void ShortsDock::SaveSettings(obs_data_t *data)
 {
 	vsp::SaveSettingsToData(data, settings, verticalWidth, verticalHeight);
+	SaveHotkeys(data);
 
 	OBSDataArrayAutoRelease arr = obs_data_array_create();
 	for (auto it = verticalMirrors.begin(); it != verticalMirrors.end(); ++it) {
@@ -1648,6 +1722,7 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	loadingSettings = true;
 
 	settings = vsp::LoadSettingsFromData(data, verticalWidth, verticalHeight);
+	LoadHotkeys(data);
 	ApplyCanvasFromSettings();
 
 	verticalMirrors.clear();
@@ -1683,7 +1758,9 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 		outputs->ApplySettings(settings);
 
 	loadingSettings = false;
-	ApplyWorkspaceLayout(settings.layout, true);
+	RefreshVerticalWorkspace(true);
+	if (automation)
+		automation->ApplySettings(settings);
 	RefreshScenesList();
 	RefreshTransitions();
 	RefreshMixer();
@@ -1698,12 +1775,14 @@ void ShortsDock::SyncActiveSceneFromFrontend()
 	if (!cur)
 		return;
 
-	if (settings.layout == vsp::WorkspaceLayout::Vertical) {
-		obs_scene_t *mirror = EnsureVerticalMirror(cur);
-		SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
-		SetActiveScene(mirror, true);
-	} else {
-		SetActiveScene(obs_scene_from_source(cur), false);
+	obs_scene_t *mirror = EnsureVerticalMirror(cur);
+	SyncMirrorFromMain(mirror, obs_scene_from_source(cur));
+	SetActiveScene(mirror, true);
+
+	if (automation) {
+		const char *uuid = obs_source_get_uuid(cur);
+		automation->OnSceneChanged(uuid ? QString::fromUtf8(uuid) : QString(),
+					   QString::fromUtf8(obs_source_get_name(cur)));
 	}
 
 	obs_source_release(cur);
@@ -1716,10 +1795,31 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 		return;
 
 	switch (event) {
+	case OBS_FRONTEND_EVENT_FINISHED_LOADING:
+		QMetaObject::invokeMethod(dock, [dock]() {
+			if (dock->automation)
+				dock->automation->OnObsFinishedLoading();
+		}, Qt::QueuedConnection);
+		break;
 	case OBS_FRONTEND_EVENT_EXIT:
 	case OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN:
+		dock->shuttingDown = true;
+		if (dock->automation)
+			dock->automation->OnObsShutdown();
 		if (dock->outputs)
 			dock->outputs->StopAll();
+		break;
+	case OBS_FRONTEND_EVENT_STREAMING_STARTED:
+		QMetaObject::invokeMethod(dock, [dock]() {
+			if (dock->automation)
+				dock->automation->OnMainStreamingStarted();
+		}, Qt::QueuedConnection);
+		break;
+	case OBS_FRONTEND_EVENT_STREAMING_STOPPED:
+		QMetaObject::invokeMethod(dock, [dock]() {
+			if (dock->automation)
+				dock->automation->OnMainStreamingStopped();
+		}, Qt::QueuedConnection);
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
 		QMetaObject::invokeMethod(dock, "RefreshScenesList", Qt::QueuedConnection);
@@ -1736,6 +1836,7 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
 		QMetaObject::invokeMethod(dock, "RefreshMixer", Qt::QueuedConnection);
 		QMetaObject::invokeMethod(dock, "RefreshScenesList", Qt::QueuedConnection);
+		QMetaObject::invokeMethod(dock, "SyncActiveSceneFromFrontend", Qt::QueuedConnection);
 		break;
 	default:
 		break;
@@ -2182,4 +2283,147 @@ void ShortsDock::UpdateCursor(uint32_t flags)
 		target->setCursor(Qt::SizeVerCursor);
 	else
 		target->setCursor(Qt::ArrowCursor);
+}
+
+void ShortsDock::RegisterHotkeys()
+{
+	hkShortClip = obs_hotkey_register_frontend("VerticalShorts.SaveShortClip", "Vertical Shorts: Save Short Clip",
+						   HotkeyThunk, this);
+	hkLongClip = obs_hotkey_register_frontend("VerticalShorts.SaveLongClip", "Vertical Shorts: Save Long Clip",
+						  HotkeyThunk, this);
+	hkStartRec = obs_hotkey_register_frontend("VerticalShorts.StartRecording", "Vertical Shorts: Start Vertical Recording",
+						  HotkeyThunk, this);
+	hkStopRec = obs_hotkey_register_frontend("VerticalShorts.StopRecording", "Vertical Shorts: Stop Vertical Recording",
+						 HotkeyThunk, this);
+	hkToggleRec = obs_hotkey_register_frontend("VerticalShorts.ToggleRecording", "Vertical Shorts: Toggle Vertical Recording",
+						   HotkeyThunk, this);
+	hkStartLive = obs_hotkey_register_frontend("VerticalShorts.StartLive", "Vertical Shorts: Start Vertical Live Output",
+						   HotkeyThunk, this);
+	hkStopLive = obs_hotkey_register_frontend("VerticalShorts.StopLive", "Vertical Shorts: Stop Vertical Live Output",
+						  HotkeyThunk, this);
+	hkSettings = obs_hotkey_register_frontend("VerticalShorts.OpenSettings", "Vertical Shorts: Open Settings", HotkeyThunk,
+						  this);
+}
+
+void ShortsDock::UnregisterHotkeys()
+{
+	auto unreg = [](obs_hotkey_id &id) {
+		if (id != OBS_INVALID_HOTKEY_ID) {
+			obs_hotkey_unregister(id);
+			id = OBS_INVALID_HOTKEY_ID;
+		}
+	};
+	unreg(hkShortClip);
+	unreg(hkLongClip);
+	unreg(hkStartRec);
+	unreg(hkStopRec);
+	unreg(hkToggleRec);
+	unreg(hkStartLive);
+	unreg(hkStopLive);
+	unreg(hkSettings);
+}
+
+void ShortsDock::SaveHotkeys(obs_data_t *data) const
+{
+	auto saveOne = [&](obs_hotkey_id id, const char *key) {
+		obs_data_array_t *arr = obs_hotkey_save(id);
+		if (arr) {
+			obs_data_set_array(data, key, arr);
+			obs_data_array_release(arr);
+		}
+	};
+	saveOne(hkShortClip, "hotkey_short_clip");
+	saveOne(hkLongClip, "hotkey_long_clip");
+	saveOne(hkStartRec, "hotkey_start_rec");
+	saveOne(hkStopRec, "hotkey_stop_rec");
+	saveOne(hkToggleRec, "hotkey_toggle_rec");
+	saveOne(hkStartLive, "hotkey_start_live");
+	saveOne(hkStopLive, "hotkey_stop_live");
+	saveOne(hkSettings, "hotkey_settings");
+}
+
+void ShortsDock::LoadHotkeys(obs_data_t *data)
+{
+	auto load = [&](obs_hotkey_id id, const char *key) {
+		obs_data_array_t *arr = obs_data_get_array(data, key);
+		if (arr) {
+			obs_hotkey_load(id, arr);
+			obs_data_array_release(arr);
+		}
+	};
+	load(hkShortClip, "hotkey_short_clip");
+	load(hkLongClip, "hotkey_long_clip");
+	load(hkStartRec, "hotkey_start_rec");
+	load(hkStopRec, "hotkey_stop_rec");
+	load(hkToggleRec, "hotkey_toggle_rec");
+	load(hkStartLive, "hotkey_start_live");
+	load(hkStopLive, "hotkey_stop_live");
+	load(hkSettings, "hotkey_settings");
+}
+
+void ShortsDock::HotkeyThunk(void *data, obs_hotkey_id id, obs_hotkey_t *, bool pressed)
+{
+	if (!pressed)
+		return;
+	auto *dock = static_cast<ShortsDock *>(data);
+	if (!dock || dock->clearing || dock->shuttingDown)
+		return;
+	QMetaObject::invokeMethod(
+		dock,
+		[dock, id]() {
+			if (id == dock->hkShortClip)
+				dock->HotkeySaveShortClip();
+			else if (id == dock->hkLongClip)
+				dock->HotkeySaveLongClip();
+			else if (id == dock->hkStartRec)
+				dock->HotkeyStartRecording();
+			else if (id == dock->hkStopRec)
+				dock->HotkeyStopRecording();
+			else if (id == dock->hkToggleRec)
+				dock->HotkeyToggleRecording();
+			else if (id == dock->hkStartLive)
+				dock->HotkeyStartLive();
+			else if (id == dock->hkStopLive)
+				dock->HotkeyStopLive();
+			else if (id == dock->hkSettings)
+				dock->HotkeyOpenSettings();
+		},
+		Qt::QueuedConnection);
+}
+
+void ShortsDock::HotkeySaveShortClip()
+{
+	OnShortClip();
+}
+void ShortsDock::HotkeySaveLongClip()
+{
+	OnLongClip();
+}
+void ShortsDock::HotkeyStartRecording()
+{
+	if (outputs && !outputs->IsRecording())
+		OnRecord();
+}
+void ShortsDock::HotkeyStopRecording()
+{
+	if (outputs && outputs->IsRecording())
+		OnRecord();
+}
+void ShortsDock::HotkeyToggleRecording()
+{
+	OnRecord();
+}
+void ShortsDock::HotkeyStartLive()
+{
+	if (outputs && !outputs->IsStreaming())
+		OnGoLive();
+}
+void ShortsDock::HotkeyStopLive()
+{
+	if (outputs && outputs->IsStreaming())
+		OnGoLive();
+}
+void ShortsDock::HotkeyOpenSettings()
+{
+	OnSettings();
 }

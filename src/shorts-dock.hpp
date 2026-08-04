@@ -2,11 +2,13 @@
 
 #include "plugin-settings.hpp"
 #include "qt-display.hpp"
+#include "recording-automation.hpp"
 #include "vertical-outputs.hpp"
 
 #include <graphics/matrix4.h>
 #include <graphics/vec2.h>
 #include <obs-frontend-api.h>
+#include <obs-hotkey.h>
 #include <obs.hpp>
 
 #include <QComboBox>
@@ -66,8 +68,17 @@ public:
 	void SaveSettings(obs_data_t *data);
 	void LoadSettings(obs_data_t *data);
 
+public slots:
+	void HotkeySaveShortClip();
+	void HotkeySaveLongClip();
+	void HotkeyStartRecording();
+	void HotkeyStopRecording();
+	void HotkeyToggleRecording();
+	void HotkeyStartLive();
+	void HotkeyStopLive();
+	void HotkeyOpenSettings();
+
 private slots:
-	void OnWorkspaceChanged(int index);
 	void OnSceneSelectionChanged();
 	void OnAddScene();
 	void OnRemoveScene();
@@ -91,7 +102,8 @@ private slots:
 	void OnTransitionDurationChanged(int value);
 	void OnGoLive();
 	void OnRecord();
-	void OnClip();
+	void OnShortClip();
+	void OnLongClip();
 	void OnSettings();
 	void RefreshScenesList();
 	void RefreshSourcesList();
@@ -100,12 +112,14 @@ private slots:
 	void RefreshTransformControls();
 	void OnStreamingChanged(bool active);
 	void OnRecordingChanged(bool active);
-	void OnClipSaved(const QString &path);
+	void OnClipSaved(const QString &path, ClipKind kind);
 	void SyncActiveSceneFromFrontend();
+	void OnAutomationStatus(vsp::AutomationStatus status, const QString &text);
+	void OnAutomationNotify(const QString &title, const QString &message);
 
 private:
 	void BuildUI();
-	void ApplyWorkspaceLayout(vsp::WorkspaceLayout layout, bool force = false);
+	void RefreshVerticalWorkspace(bool force = false);
 	void ApplyCanvasFromSettings();
 	void CreateView();
 	void DestroyView();
@@ -114,8 +128,14 @@ private:
 	obs_scene_t *EnsureVerticalMirror(obs_source_t *mainSceneSource);
 	void SyncMirrorFromMain(obs_scene_t *mirror, obs_scene_t *mainScene);
 	obs_scene_t *ActiveEditScene() const { return scene; }
-	uint32_t ActiveCanvasWidth() const;
-	uint32_t ActiveCanvasHeight() const;
+	uint32_t ActiveCanvasWidth() const { return verticalWidth; }
+	uint32_t ActiveCanvasHeight() const { return verticalHeight; }
+	void HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind);
+	void CollectSceneLists(QStringList &names, QStringList &uuids) const;
+	void RegisterHotkeys();
+	void UnregisterHotkeys();
+	void SaveHotkeys(obs_data_t *data) const;
+	void LoadHotkeys(obs_data_t *data);
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -135,16 +155,18 @@ private:
 
 	static void DrawCallback(void *data, uint32_t cx, uint32_t cy);
 	static void FrontendEvent(enum obs_frontend_event event, void *private_data);
+	static void HotkeyThunk(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 
 	/* UI */
-	QComboBox *workspaceCombo = nullptr;
 	OBSQTDisplay *preview = nullptr;
 	std::unique_ptr<OBSEventFilter> previewEventFilter;
 	QWidget *controlsOverlay = nullptr;
 	QPushButton *goLiveBtn = nullptr;
 	QPushButton *recordBtn = nullptr;
-	QPushButton *clipBtn = nullptr;
+	QPushButton *shortClipBtn = nullptr;
+	QPushButton *longClipBtn = nullptr;
 	QPushButton *settingsBtn = nullptr;
+	QLabel *autoIndicator = nullptr;
 
 	QListWidget *scenesList = nullptr;
 	QListWidget *sourcesList = nullptr;
@@ -162,17 +184,17 @@ private:
 	/* State */
 	vsp::PluginSettings settings;
 	std::unique_ptr<VerticalOutputs> outputs;
+	std::unique_ptr<RecordingAutomation> automation;
+	bool recordingStartedManually = false;
 
 	obs_view_t *view = nullptr;
 	video_t *video = nullptr;
-	obs_scene_t *scene = nullptr; /* currently previewed/edited scene */
+	obs_scene_t *scene = nullptr;
 	bool sceneIsMirror = false;
-	QMap<QString, OBSScene> verticalMirrors; /* main scene UUID -> private mirror */
+	QMap<QString, OBSScene> verticalMirrors;
 
 	uint32_t verticalWidth = 1080;
 	uint32_t verticalHeight = 1920;
-	uint32_t horizontalWidth = 1920;
-	uint32_t horizontalHeight = 1080;
 	float previewScale = 1.0f;
 	int previewX = 0;
 	int previewY = 0;
@@ -184,6 +206,7 @@ private:
 	bool updatingTransform = false;
 	bool clearing = false;
 	bool loadingSettings = false;
+	bool shuttingDown = false;
 
 	vec2 startPos{};
 	vec2 mousePos{};
@@ -199,4 +222,13 @@ private:
 	matrix4 itemToScreen{};
 
 	gs_vertbuffer_t *rectFill = nullptr;
+
+	obs_hotkey_id hkShortClip = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkLongClip = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkStartRec = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkStopRec = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkToggleRec = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkStartLive = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkStopLive = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id hkSettings = OBS_INVALID_HOTKEY_ID;
 };

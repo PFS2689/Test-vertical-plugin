@@ -18,15 +18,31 @@ static void expect(bool cond, const char *msg)
 int main()
 {
 	QString err;
+	QString warn;
 	expect(vsp::ValidateCanvasSize(1080, 1920, &err), "1080x1920 valid");
 	expect(!vsp::ValidateCanvasSize(0, 1920, &err), "zero width invalid");
 	expect(!vsp::ValidateCanvasSize(1080, 100, &err), "too small height invalid");
 	expect(!vsp::ValidateCanvasSize(9000, 9000, &err), "too large invalid");
 
-	expect(vsp::ValidateClipSeconds(30, &err), "30s clip valid");
-	expect(!vsp::ValidateClipSeconds(0, &err), "0s clip invalid");
-	expect(!vsp::ValidateClipSeconds(-5, &err), "negative clip invalid");
-	expect(!vsp::ValidateClipSeconds(601, &err), "too long clip invalid");
+	expect(vsp::ValidateShortClipSeconds(30, &err), "30s short clip valid");
+	expect(!vsp::ValidateShortClipSeconds(0, &err), "0s short clip invalid");
+	expect(!vsp::ValidateShortClipSeconds(-5, &err), "negative short clip invalid");
+	expect(!vsp::ValidateShortClipSeconds(vsp::kMaxClipBufferSeconds + 1, &err), "short clip over max invalid");
+
+	expect(vsp::ValidateLongClipSeconds(120, &err, &warn), "2min long clip valid");
+	expect(vsp::ValidateLongClipSeconds(300, &err, &warn), "5min long clip valid");
+	expect(!warn.isEmpty(), "5min long clip warns about resources");
+	expect(!vsp::ValidateLongClipSeconds(0, &err), "0s long clip invalid");
+	expect(!vsp::ValidateLongClipSeconds(vsp::kMaxClipBufferSeconds + 1, &err), "long clip over max invalid");
+
+	expect(vsp::ParseMmSs(QStringLiteral("2:30"), &err) == 150, "parse 2:30");
+	expect(vsp::ParseMmSs(QStringLiteral("0:00"), &err) < 0, "reject 0:00");
+	expect(vsp::ParseMmSs(QStringLiteral("ab:cd"), &err) < 0, "reject letters");
+	expect(vsp::ParseMmSs(QStringLiteral("1:60"), &err) < 0, "reject bad seconds");
+	expect(vsp::ParseMmSs(QStringLiteral("90"), &err) == 90, "parse total seconds");
+
+	expect(vsp::ValidateAutoDurationSeconds(60, &err), "auto duration ok");
+	expect(!vsp::ValidateAutoDurationSeconds(0, &err), "auto duration zero invalid");
 
 	expect(vsp::IsPortrait(1080, 1920), "portrait");
 	expect(!vsp::IsPortrait(1920, 1080), "landscape not portrait");
@@ -38,11 +54,22 @@ int main()
 	expect(w == 720 && h == 1280, "custom preset size");
 
 	vsp::PluginSettings s;
-	s.clipPreset = vsp::ClipLengthPreset::Sec60;
-	expect(vsp::EffectiveClipSeconds(s) == 60, "preset clip seconds");
-	s.clipPreset = vsp::ClipLengthPreset::Custom;
-	s.customClipSeconds = 42;
-	expect(vsp::EffectiveClipSeconds(s) == 42, "custom clip seconds");
+	s.shortClipPreset = vsp::ShortClipPreset::Sec60;
+	s.longClipPreset = vsp::LongClipPreset::Min3;
+	expect(vsp::EffectiveShortClipSeconds(s) == 60, "short preset seconds");
+	expect(vsp::EffectiveLongClipSeconds(s) == 180, "long preset seconds");
+	expect(vsp::RequiredBufferSeconds(s) == 180, "buffer sized to long clip");
+
+	s.shortClipPreset = vsp::ShortClipPreset::Custom;
+	s.customShortClipSeconds = 42;
+	s.longClipPreset = vsp::LongClipPreset::Custom;
+	s.customLongClipSeconds = 150;
+	expect(vsp::EffectiveShortClipSeconds(s) == 42, "custom short seconds");
+	expect(vsp::EffectiveLongClipSeconds(s) == 150, "custom long seconds");
+	expect(vsp::EffectiveShortClipSeconds(s) != vsp::EffectiveLongClipSeconds(s),
+	       "short and long durations independent");
+
+	expect(!s.automationEnabled, "automation disabled by default");
 
 	if (failures) {
 		std::cerr << failures << " test(s) failed\n";

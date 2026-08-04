@@ -54,6 +54,8 @@ target_sources(
     src/settings-dialog.hpp
     src/vertical-outputs.cpp
     src/vertical-outputs.hpp
+    src/recording-automation.cpp
+    src/recording-automation.hpp
     src/qt-display.cpp
     src/qt-display.hpp
     src/display-helpers.hpp

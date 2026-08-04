@@ -13,7 +13,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-shorts-vertical", "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-	return "Vertical Shorts production dock with vertical/horizontal workspaces, streaming, recording, and clips";
+	return "Vertical Shorts production dock with vertical canvas, streaming, recording, short/long clips, and automation";
 }
 
 MODULE_EXPORT const char *obs_module_name(void)

@@ -1,6 +1,6 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.1.0** — Windows
+**Version 1.2.0** — Windows
 
 Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTok, Reels, and Twitch vertical.
 
@@ -13,10 +13,11 @@ Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTo
 
 Dock title: **Vertical Shorts**
 
-- Workspace switch: **Vertical Layout** (default) / **Horizontal Layout**
+- Vertical-only workspace (main OBS remains the horizontal production canvas)
 - OBS-style panels: Scenes, Sources, Audio Mixer, Transitions
-- Canvas controls (bottom-right): 🟢 Go Live · ⏺️ Record · 📸 Clip · ⚙️ Settings
+- Canvas controls (bottom-right): 🟢 Go Live · ⏺️ Record · 📸 Short Clip · 📷 Long Clip · ⚙️ Settings
 - Vertical transforms are stored on private mirror scenes so your main horizontal layout is not overwritten
+- Short/long clip buffer, Vertical Recording Automation, and optional OBS hotkeys
 
 ## Install
 

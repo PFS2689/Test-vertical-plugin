@@ -4,8 +4,26 @@
 
 #include <obs.hpp>
 
+#include <QDateTime>
 #include <QObject>
 #include <QString>
+
+enum class ClipKind { Short = 0, Long = 1 };
+
+enum class ClipSaveResult {
+	Ok = 0,
+	BufferNotReady,
+	PartialAvailable,
+	Error,
+};
+
+struct ClipSaveInfo {
+	ClipSaveResult result = ClipSaveResult::Error;
+	int requestedSeconds = 0;
+	int availableSeconds = 0;
+	QString path;
+	QString message;
+};
 
 class VerticalOutputs : public QObject {
 	Q_OBJECT
@@ -14,7 +32,7 @@ public:
 	~VerticalOutputs() override;
 
 	void SetVideo(video_t *video);
-	void ApplySettings(const vsp::PluginSettings &settings);
+	void ApplySettings(const vsp::PluginSettings &settings, bool *bufferRestartRequired = nullptr);
 
 	bool StartStreaming(QString *error);
 	void StopStreaming();
@@ -23,27 +41,40 @@ public:
 	bool StartRecording(QString *error);
 	void StopRecording();
 	bool IsRecording() const;
+	QString LastRecordingPath() const { return lastRecordingPath; }
 
 	bool EnsureClipBuffer(QString *error);
 	void StopClipBuffer();
 	bool IsClipBufferActive() const;
-	bool SaveClip(QString *savedPath, QString *error);
+	int BufferedSecondsAvailable() const;
+	int ConfiguredBufferSeconds() const;
+
+	ClipSaveInfo SaveShortClip();
+	ClipSaveInfo SaveLongClip();
+	ClipSaveInfo SaveClipOfDuration(int seconds, ClipKind kind, bool allowPartial);
 	QString LastClipPath() const { return lastClipPath; }
 
 	void StopAll();
 
 	QString ActiveEncoderSummary() const;
 	QString ActiveBitrateSummary() const;
+	QString RecordingStatusSummary() const;
+	QString ResolveRecordingDirectory() const;
+
+	bool CanStartRecording(QString *error) const;
+	bool PathWritable(QString *error) const;
 
 signals:
 	void streamingChanged(bool active);
 	void recordingChanged(bool active);
 	void clipBufferChanged(bool active);
-	void clipSaved(const QString &path);
+	void clipSaved(const QString &path, ClipKind kind);
+	void recordingStarted(const QString &path);
+	void recordingStopped();
 
 private:
-	QString ResolveRecordingDirectory() const;
-	QString MakeRecordingFilename() const;
+	QString MakeOutputFilename(const QString &outputType, int durationSeconds = 0) const;
+	ClipSaveInfo SaveClipInternal(int seconds, ClipKind kind, bool allowPartial);
 	static void OnStreamStop(void *data, calldata_t *cd);
 	static void OnRecordStop(void *data, calldata_t *cd);
 	static void OnReplaySaved(void *data, calldata_t *cd);
@@ -56,7 +87,12 @@ private:
 	obs_output_t *replayOutput = nullptr;
 
 	QString lastClipPath;
+	QString lastRecordingPath;
 	QString lastEncoderName;
 	int lastVideoBitrate = 0;
 	int lastAudioBitrate = 0;
+	int configuredBufferSeconds = 60;
+	QDateTime clipBufferStartedAt;
+	ClipKind pendingClipKind = ClipKind::Short;
+	int pendingClipSeconds = 0;
 };

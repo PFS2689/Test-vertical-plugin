@@ -5,6 +5,8 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
+#include <QStorageInfo>
 
 namespace {
 
@@ -23,6 +25,16 @@ void ReleasePair(EncoderPair &p)
 		obs_encoder_release(p.audio);
 		p.audio = nullptr;
 	}
+}
+
+QString SanitizeFilenamePart(QString s)
+{
+	const QString forbidden = QStringLiteral("<>:\"/\\|?*");
+	for (QChar c : forbidden)
+		s.replace(c, QLatin1Char('_'));
+	s.replace(QLatin1Char('\n'), QLatin1Char('_'));
+	s.replace(QLatin1Char('\r'), QLatin1Char('_'));
+	return s.trimmed();
 }
 
 EncoderPair MakeEncoders(video_t *video, bool forStreaming, QString *encoderName, int *vBitrate, int *aBitrate,
@@ -119,13 +131,25 @@ void VerticalOutputs::SetVideo(video_t *v)
 	video = v;
 }
 
-void VerticalOutputs::ApplySettings(const vsp::PluginSettings &s)
+void VerticalOutputs::ApplySettings(const vsp::PluginSettings &s, bool *bufferRestartRequired)
 {
+	const int oldBuf = configuredBufferSeconds;
 	settings = s;
+	configuredBufferSeconds = vsp::RequiredBufferSeconds(settings);
+	if (bufferRestartRequired)
+		*bufferRestartRequired = false;
+
 	if (replayOutput && obs_output_active(replayOutput)) {
+		if (configuredBufferSeconds != oldBuf) {
+			if (bufferRestartRequired)
+				*bufferRestartRequired = true;
+		}
 		OBSDataAutoRelease data = obs_data_create();
 		obs_data_set_string(data, "directory", ResolveRecordingDirectory().toUtf8().constData());
-		obs_data_set_int(data, "max_time_sec", vsp::EffectiveClipSeconds(settings));
+		obs_data_set_string(data, "format", "VerticalShorts_%CCYY-%MM-%DD_%hh-%mm-%ss");
+		obs_data_set_string(data, "extension", "mp4");
+		obs_data_set_bool(data, "allow_spaces", false);
+		obs_data_set_int(data, "max_time_sec", configuredBufferSeconds);
 		obs_data_set_int(data, "max_size_mb", 0);
 		obs_output_update(replayOutput, data);
 	}
@@ -142,11 +166,20 @@ QString VerticalOutputs::ResolveRecordingDirectory() const
 	return path;
 }
 
-QString VerticalOutputs::MakeRecordingFilename() const
+QString VerticalOutputs::MakeOutputFilename(const QString &outputType, int durationSeconds) const
 {
 	const QString dir = ResolveRecordingDirectory();
 	const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd_HH-mm-ss"));
-	return QDir(dir).filePath(QStringLiteral("VerticalShorts_%1.mp4").arg(stamp));
+	QString base = QStringLiteral("%1_%2").arg(SanitizeFilenamePart(outputType), stamp);
+	if (durationSeconds > 0)
+		base += QStringLiteral("_%1s").arg(durationSeconds);
+
+	QString path = QDir(dir).filePath(base + QStringLiteral(".mp4"));
+	int n = 1;
+	while (QFileInfo::exists(path)) {
+		path = QDir(dir).filePath(QStringLiteral("%1_%2.mp4").arg(base).arg(n++));
+	}
+	return path;
 }
 
 QString VerticalOutputs::ActiveEncoderSummary() const
@@ -161,6 +194,62 @@ QString VerticalOutputs::ActiveBitrateSummary() const
 	if (lastVideoBitrate <= 0)
 		return QStringLiteral("(inherits OBS when output starts)");
 	return QStringLiteral("%1 kbps video / %2 kbps audio").arg(lastVideoBitrate).arg(lastAudioBitrate);
+}
+
+QString VerticalOutputs::RecordingStatusSummary() const
+{
+	if (IsRecording())
+		return QStringLiteral("Recording — %1").arg(lastRecordingPath);
+	return QStringLiteral("Idle");
+}
+
+bool VerticalOutputs::PathWritable(QString *error) const
+{
+	const QString dir = ResolveRecordingDirectory();
+	QFileInfo fi(dir);
+	if (!fi.exists()) {
+		if (!QDir().mkpath(dir)) {
+			if (error)
+				*error = QStringLiteral("Recording path does not exist and could not be created:\n%1").arg(dir);
+			return false;
+		}
+	}
+	fi.refresh();
+	if (!fi.isDir()) {
+		if (error)
+			*error = QStringLiteral("Recording path is not a directory:\n%1").arg(dir);
+		return false;
+	}
+	if (!fi.isWritable()) {
+		if (error)
+			*error = QStringLiteral("Recording path is not writable:\n%1").arg(dir);
+		return false;
+	}
+
+	QStorageInfo storage(dir);
+	if (storage.isValid() && storage.bytesAvailable() >= 0 && storage.bytesAvailable() < 50LL * 1024 * 1024) {
+		if (error)
+			*error = QStringLiteral("Insufficient disk space on the recording path (less than 50 MB free).");
+		return false;
+	}
+	return true;
+}
+
+bool VerticalOutputs::CanStartRecording(QString *error) const
+{
+	if (!video) {
+		if (error)
+			*error = QStringLiteral("Vertical video pipeline is not ready.");
+		return false;
+	}
+	if (IsRecording()) {
+		if (error)
+			*error = QStringLiteral("Vertical recording is already active.");
+		return false;
+	}
+	if (!PathWritable(error))
+		return false;
+	return true;
 }
 
 bool VerticalOutputs::StartStreaming(QString *error)
@@ -209,7 +298,7 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	obs_output_set_media(streamOutput, video, obs_get_audio());
 	obs_output_set_video_encoder(streamOutput, pair.video);
 	obs_output_set_audio_encoder(streamOutput, pair.audio, 0);
-	ReleasePair(pair); /* output holds refs */
+	ReleasePair(pair);
 
 	if (!obs_output_start(streamOutput)) {
 		const char *err = obs_output_get_last_error(streamOutput);
@@ -240,13 +329,8 @@ bool VerticalOutputs::IsStreaming() const
 
 bool VerticalOutputs::StartRecording(QString *error)
 {
-	if (!video) {
-		if (error)
-			*error = QStringLiteral("Vertical video pipeline is not ready.");
+	if (!CanStartRecording(error))
 		return false;
-	}
-	if (IsRecording())
-		return true;
 
 	EncoderPair pair = MakeEncoders(video, false, &lastEncoderName, &lastVideoBitrate, &lastAudioBitrate, error);
 	if (!pair.video || !pair.audio) {
@@ -270,7 +354,7 @@ bool VerticalOutputs::StartRecording(QString *error)
 		return false;
 	}
 
-	const QString path = MakeRecordingFilename();
+	const QString path = MakeOutputFilename(QStringLiteral("VerticalRecording"));
 	OBSDataAutoRelease data = obs_data_create();
 	obs_data_set_string(data, "path", path.toUtf8().constData());
 	obs_data_set_string(data, "muxer_settings", "");
@@ -288,7 +372,9 @@ bool VerticalOutputs::StartRecording(QString *error)
 		return false;
 	}
 
+	lastRecordingPath = path;
 	emit recordingChanged(true);
+	emit recordingStarted(path);
 	blog(LOG_INFO, "[obs-shorts-vertical] Vertical recording started: %s", path.toUtf8().constData());
 	return true;
 }
@@ -298,11 +384,28 @@ void VerticalOutputs::StopRecording()
 	if (recordOutput && obs_output_active(recordOutput))
 		obs_output_stop(recordOutput);
 	emit recordingChanged(false);
+	emit recordingStopped();
 }
 
 bool VerticalOutputs::IsRecording() const
 {
 	return recordOutput && obs_output_active(recordOutput);
+}
+
+int VerticalOutputs::ConfiguredBufferSeconds() const
+{
+	return configuredBufferSeconds > 0 ? configuredBufferSeconds : vsp::RequiredBufferSeconds(settings);
+}
+
+int VerticalOutputs::BufferedSecondsAvailable() const
+{
+	if (!IsClipBufferActive() || !clipBufferStartedAt.isValid())
+		return 0;
+	const qint64 elapsed = clipBufferStartedAt.secsTo(QDateTime::currentDateTime());
+	if (elapsed < 0)
+		return 0;
+	const int cap = ConfiguredBufferSeconds();
+	return elapsed >= cap ? cap : static_cast<int>(elapsed);
 }
 
 bool VerticalOutputs::EnsureClipBuffer(QString *error)
@@ -319,6 +422,9 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 	}
 	if (IsClipBufferActive())
 		return true;
+
+	if (!PathWritable(error))
+		return false;
 
 	EncoderPair pair = MakeEncoders(video, false, &lastEncoderName, &lastVideoBitrate, &lastAudioBitrate, error);
 	if (!pair.video || !pair.audio) {
@@ -340,12 +446,14 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 		return false;
 	}
 
+	configuredBufferSeconds = vsp::RequiredBufferSeconds(settings);
+
 	OBSDataAutoRelease data = obs_data_create();
 	obs_data_set_string(data, "directory", ResolveRecordingDirectory().toUtf8().constData());
-	obs_data_set_string(data, "format", "%CCYY-%MM-%DD %hh-%mm-%ss");
+	obs_data_set_string(data, "format", "VerticalShorts_%CCYY-%MM-%DD_%hh-%mm-%ss");
 	obs_data_set_string(data, "extension", "mp4");
-	obs_data_set_bool(data, "allow_spaces", true);
-	obs_data_set_int(data, "max_time_sec", vsp::EffectiveClipSeconds(settings));
+	obs_data_set_bool(data, "allow_spaces", false);
+	obs_data_set_int(data, "max_time_sec", configuredBufferSeconds);
 	obs_data_set_int(data, "max_size_mb", 0);
 	obs_output_update(replayOutput, data);
 
@@ -362,9 +470,10 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 		return false;
 	}
 
+	clipBufferStartedAt = QDateTime::currentDateTime();
 	emit clipBufferChanged(true);
-	blog(LOG_INFO, "[obs-shorts-vertical] Vertical clip buffer started (%d sec)",
-	     vsp::EffectiveClipSeconds(settings));
+	blog(LOG_INFO, "[obs-shorts-vertical] Vertical clip buffer started (%d sec capacity)",
+	     configuredBufferSeconds);
 	return true;
 }
 
@@ -372,6 +481,7 @@ void VerticalOutputs::StopClipBuffer()
 {
 	if (replayOutput && obs_output_active(replayOutput))
 		obs_output_stop(replayOutput);
+	clipBufferStartedAt = QDateTime();
 	emit clipBufferChanged(false);
 }
 
@@ -380,46 +490,103 @@ bool VerticalOutputs::IsClipBufferActive() const
 	return replayOutput && obs_output_active(replayOutput);
 }
 
-bool VerticalOutputs::SaveClip(QString *savedPath, QString *error)
+ClipSaveInfo VerticalOutputs::SaveShortClip()
 {
+	return SaveClipOfDuration(vsp::EffectiveShortClipSeconds(settings), ClipKind::Short, false);
+}
+
+ClipSaveInfo VerticalOutputs::SaveLongClip()
+{
+	return SaveClipOfDuration(vsp::EffectiveLongClipSeconds(settings), ClipKind::Long, false);
+}
+
+ClipSaveInfo VerticalOutputs::SaveClipOfDuration(int seconds, ClipKind kind, bool allowPartial)
+{
+	return SaveClipInternal(seconds, kind, allowPartial);
+}
+
+ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool allowPartial)
+{
+	ClipSaveInfo info;
+	info.requestedSeconds = seconds;
+	info.result = ClipSaveResult::Error;
+
+	if (seconds < 1) {
+		info.message = QStringLiteral("Requested clip duration is invalid.");
+		return info;
+	}
+
+	QString err;
 	if (!IsClipBufferActive()) {
-		if (!EnsureClipBuffer(error))
-			return false;
-		if (error)
-			*error = QStringLiteral(
-				"Clip buffer just started — wait a few seconds for it to fill, then try again.");
-		return false;
+		if (!EnsureClipBuffer(&err)) {
+			info.message = err;
+			return info;
+		}
+		info.result = ClipSaveResult::BufferNotReady;
+		info.availableSeconds = 0;
+		info.message = QStringLiteral(
+			"The vertical clip buffer just started.\n\n"
+			"Requested: %1 seconds\n"
+			"Available: 0 seconds\n\n"
+			"Allow the buffer to run longer, then try again.")
+					   .arg(seconds);
+		return info;
+	}
+
+	info.availableSeconds = BufferedSecondsAvailable();
+	if (info.availableSeconds < seconds && !allowPartial) {
+		info.result = info.availableSeconds > 0 ? ClipSaveResult::PartialAvailable : ClipSaveResult::BufferNotReady;
+		info.message = QStringLiteral(
+			"Not enough footage is buffered yet.\n\n"
+			"Requested: %1 seconds\n"
+			"Available: %2 seconds\n\n"
+			"%3")
+					   .arg(seconds)
+					   .arg(info.availableSeconds)
+					   .arg(info.availableSeconds > 0
+							? QStringLiteral(
+								  "You can save the available portion, or wait for the buffer to fill.")
+							: QStringLiteral(
+								  "Allow the buffer to run longer before saving."));
+		return info;
 	}
 
 	proc_handler_t *ph = obs_output_get_proc_handler(replayOutput);
 	if (!ph) {
-		if (error)
-			*error = QStringLiteral("Clip buffer does not support save.");
-		return false;
+		info.message = QStringLiteral("Clip buffer does not support save.");
+		return info;
 	}
+
+	pendingClipKind = kind;
+	pendingClipSeconds = seconds;
+
+	/* Update format hint before save so filenames include type when possible */
+	const char *typeName = kind == ClipKind::Long ? "LongClip" : "ShortClip";
+	OBSDataAutoRelease data = obs_data_create();
+	obs_data_set_string(data, "directory", ResolveRecordingDirectory().toUtf8().constData());
+	obs_data_set_string(data, "format",
+			    QStringLiteral("%1_%2_%CCYY-%MM-%DD_%hh-%mm-%ss")
+				    .arg(QString::fromUtf8(typeName))
+				    .arg(seconds)
+				    .toUtf8()
+				    .constData());
+	obs_data_set_string(data, "extension", "mp4");
+	obs_data_set_bool(data, "allow_spaces", false);
+	obs_data_set_int(data, "max_time_sec", ConfiguredBufferSeconds());
+	obs_output_update(replayOutput, data);
 
 	calldata_t cd;
 	calldata_init(&cd);
 	const bool ok = proc_handler_call(ph, "save", &cd);
 	calldata_free(&cd);
 	if (!ok) {
-		if (error)
-			*error = QStringLiteral("Could not save clip — buffer may still be filling.");
-		return false;
+		info.message = QStringLiteral("Could not save clip — buffer may still be filling.");
+		return info;
 	}
 
-	calldata_t cd2;
-	calldata_init(&cd2);
-	if (proc_handler_call(ph, "get_last_replay", &cd2)) {
-		const char *path = calldata_string(&cd2, "path");
-		if (path && *path) {
-			lastClipPath = QString::fromUtf8(path);
-			if (savedPath)
-				*savedPath = lastClipPath;
-		}
-	}
-	calldata_free(&cd2);
-	return true;
+	info.result = ClipSaveResult::Ok;
+	info.message = QStringLiteral("Saving %1 clip (%2 s)…").arg(QString::fromUtf8(typeName)).arg(seconds);
+	return info;
 }
 
 void VerticalOutputs::StopAll()
@@ -451,7 +618,13 @@ void VerticalOutputs::OnStreamStop(void *data, calldata_t *)
 void VerticalOutputs::OnRecordStop(void *data, calldata_t *)
 {
 	auto *self = static_cast<VerticalOutputs *>(data);
-	QMetaObject::invokeMethod(self, [self]() { emit self->recordingChanged(false); }, Qt::QueuedConnection);
+	QMetaObject::invokeMethod(
+		self,
+		[self]() {
+			emit self->recordingChanged(false);
+			emit self->recordingStopped();
+		},
+		Qt::QueuedConnection);
 }
 
 void VerticalOutputs::OnReplaySaved(void *data, calldata_t *cd)
@@ -459,12 +632,13 @@ void VerticalOutputs::OnReplaySaved(void *data, calldata_t *cd)
 	auto *self = static_cast<VerticalOutputs *>(data);
 	const char *path = calldata_string(cd, "path");
 	QString qpath = path ? QString::fromUtf8(path) : QString();
+	const ClipKind kind = self->pendingClipKind;
 	QMetaObject::invokeMethod(
 		self,
-		[self, qpath]() {
+		[self, qpath, kind]() {
 			if (!qpath.isEmpty()) {
 				self->lastClipPath = qpath;
-				emit self->clipSaved(qpath);
+				emit self->clipSaved(qpath, kind);
 			}
 		},
 		Qt::QueuedConnection);
