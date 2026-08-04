@@ -89,7 +89,9 @@ if(BUILD_TESTING OR VSP_BUILD_TESTS)
   add_executable(test_stream_destination tests/test_stream_destination.cpp)
   target_include_directories(test_stream_destination PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test_stream_destination PRIVATE Qt6::Core)
-  target_compile_definitions(test_stream_destination PRIVATE VSP_SETTINGS_TEST=1 "VSP_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"")
+  # Normalize path separators so the compile definition is a valid C string on Windows.
+  string(REPLACE "\\" "/" _vsp_src_dir "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_compile_definitions(test_stream_destination PRIVATE VSP_SETTINGS_TEST=1 "VSP_SOURCE_DIR=\"${_vsp_src_dir}\"")
   add_test(NAME stream_destination COMMAND test_stream_destination)
 
   add_executable(test_mixer_model tests/test_mixer_model.cpp)
