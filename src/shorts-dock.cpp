@@ -1584,7 +1584,7 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 }
 void ShortsDock::UpdatePreviewScale(int cx, int cy)
 {
-	GetScaleAndCenterPos((int)ActiveCanvasWidth(), (int)ActiveCanvasHeight(), cx, cy, previewX, previewY,
+	GetScaleAndCenterPos((int)verticalWidth, (int)verticalHeight, cx, cy, previewX, previewY,
 			     previewScale);
 }
 
@@ -1598,8 +1598,8 @@ void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 	if (!scene)
 		return;
 
-	const uint32_t canvasW = ActiveCanvasWidth();
-	const uint32_t canvasH = ActiveCanvasHeight();
+	const uint32_t canvasW = verticalWidth;
+	const uint32_t canvasH = verticalHeight;
 	UpdatePreviewScale((int)cx, (int)cy);
 
 	gs_viewport_push();
