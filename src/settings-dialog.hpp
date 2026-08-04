@@ -20,6 +20,10 @@ class QPushButton;
 class QTextEdit;
 class QGroupBox;
 class QFrame;
+class QWidget;
+class QGraphicsOpacityEffect;
+class QPropertyAnimation;
+class PlatformSelector;
 
 class SettingsDialog : public QDialog {
 	Q_OBJECT
@@ -65,12 +69,15 @@ private:
 	void SyncStreamingFields();
 	void UpdateDestinationStatusCard();
 	void UpdateProtocolIndicator();
+	void UpdateSelectedPlatformHero();
+	void AnimatePlatformPanel();
 	void ApplyPlatformFieldVisibility();
 	bool ValidateAndCommit(QString *error, QString *warning);
 	void PersistActiveDestinationSecrets(bool applyPlatformFromCombo = true);
 	void LoadSecretsIntoDestinations();
 	vsp::StreamDestination CurrentUiDestination(bool applyPlatformFromCombo = true) const;
 	void HighlightInvalidField(const QString &field);
+	vsp::StreamPlatform SelectedPlatform() const;
 
 	vsp::PluginSettings settings;
 	VerticalOutputs *outputs = nullptr;
@@ -144,17 +151,29 @@ private:
 	QTabWidget *tabs = nullptr;
 	int streamingTabIndex = -1;
 	QLabel *streamHelp = nullptr;
-	QComboBox *platformCombo = nullptr;
+	QLabel *selectedPlatformHero = nullptr;
+	QLabel *selectedPlatformTitle = nullptr;
+	PlatformSelector *platformSelector = nullptr;
+	QWidget *platformPanel = nullptr;
+	QGraphicsOpacityEffect *platformPanelOpacity = nullptr;
+	QPropertyAnimation *platformPanelAnim = nullptr;
 	QComboBox *destinationPicker = nullptr;
 	QFrame *statusCard = nullptr;
 	QLabel *statusCardLabel = nullptr;
+	QWidget *destNameRow = nullptr;
 	QLineEdit *destNameEdit = nullptr;
+	QWidget *serverRow = nullptr;
 	QLineEdit *verticalServerEdit = nullptr;
+	QWidget *protocolRow = nullptr;
 	QLabel *protocolLabel = nullptr;
+	QWidget *keyRowWidget = nullptr;
 	QLineEdit *verticalKeyEdit = nullptr;
 	QPushButton *showKeyBtn = nullptr;
+	QWidget *usernameRow = nullptr;
 	QLineEdit *usernameEdit = nullptr;
+	QWidget *passwordRow = nullptr;
 	QLineEdit *passwordEdit = nullptr;
+	QWidget *twitchIngestRow = nullptr;
 	QComboBox *twitchIngestCombo = nullptr;
 	QLabel *platformNote = nullptr;
 	QPushButton *platformHelpBtn = nullptr;

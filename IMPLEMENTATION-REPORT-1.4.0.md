@@ -51,9 +51,13 @@ Validates local configuration (fields, protocol, URL structure) and that an inde
 - Status: Connecting / Live / Reconnecting / Stopping / Offline / Error
 - Validation failure offers **Open Streaming Settings**
 
-## Logos
+## Logos & polished destination selector
 
-Original redistributable PNG/SVG icons (not official brand marks). See `docs/BRAND-ASSETS.md`.
+- Custom `PlatformSelector` dropdown with bundled official-style SVG marks (Simple Icons CC0 + brand fills) left of platform names
+- Hero logo + name at the top of Vertical Streaming Destination; opacity transition when switching platforms
+- Theme-aware TikTok/Instagram variants; `placeholder.svg` if a resource is missing
+- High-DPI via devicePixelRatio-aware `QSvgRenderer` pixmaps
+- Details: `docs/BRAND-ASSETS.md`
 
 ## Files
 

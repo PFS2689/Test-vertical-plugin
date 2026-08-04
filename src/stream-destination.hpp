@@ -56,20 +56,20 @@ inline QString PlatformDisplayName(StreamPlatform p)
 
 inline QString PlatformIconResource(StreamPlatform p)
 {
-	/* Bundled original PNG icons (not official brand marks). SVG sources also shipped. */
+	/* Prefer bundled official-style SVG marks under /vsp/platforms. */
 	switch (p) {
 	case StreamPlatform::YouTube:
-		return QStringLiteral(":/vsp/icons/youtube.png");
+		return QStringLiteral(":/vsp/platforms/youtube.svg");
 	case StreamPlatform::Twitch:
-		return QStringLiteral(":/vsp/icons/twitch.png");
+		return QStringLiteral(":/vsp/platforms/twitch.svg");
 	case StreamPlatform::TikTok:
-		return QStringLiteral(":/vsp/icons/tiktok.png");
+		return QStringLiteral(":/vsp/platforms/tiktok.svg");
 	case StreamPlatform::Instagram:
-		return QStringLiteral(":/vsp/icons/instagram.png");
+		return QStringLiteral(":/vsp/platforms/instagram.svg");
 	case StreamPlatform::CustomRtmp:
-		return QStringLiteral(":/vsp/icons/custom-rtmp.png");
+		return QStringLiteral(":/vsp/platforms/custom-rtmp.svg");
 	}
-	return QStringLiteral(":/vsp/icons/custom-rtmp.png");
+	return QStringLiteral(":/vsp/platforms/placeholder.svg");
 }
 
 inline QString PlatformHelpUrl(StreamPlatform p)

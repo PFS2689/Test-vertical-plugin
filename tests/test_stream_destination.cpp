@@ -41,29 +41,30 @@ int main()
 				vsp::StreamPlatform::Instagram, vsp::StreamPlatform::CustomRtmp};
 	for (auto p : platforms) {
 		expect(!vsp::PlatformDisplayName(p).isEmpty(), "platform display name present");
-		expect(vsp::PlatformIconResource(p).startsWith(QStringLiteral(":/vsp/icons/")),
+		expect(vsp::PlatformIconResource(p).startsWith(QStringLiteral(":/vsp/platforms/")),
 		       "platform icon resource path");
-		expect(vsp::PlatformIconResource(p).endsWith(QStringLiteral(".png")), "platform icon is png");
+		expect(vsp::PlatformIconResource(p).endsWith(QStringLiteral(".svg")), "platform icon is svg");
 	}
 
 	/* Bundled logo assets on disk (release package check helper).
 	 * Resolve relative to common locations because ctest may run from the build dir. */
 	QStringList iconRoots;
 #ifdef VSP_SOURCE_DIR
-	iconRoots << QDir(QStringLiteral(VSP_SOURCE_DIR)).filePath(QStringLiteral("data/icons"));
+	iconRoots << QDir(QStringLiteral(VSP_SOURCE_DIR)).filePath(QStringLiteral("data/icons/platforms"));
 #endif
-	iconRoots << QStringLiteral("data/icons") << QStringLiteral("../data/icons")
-		  << QStringLiteral("../../data/icons");
+	iconRoots << QStringLiteral("data/icons/platforms") << QStringLiteral("../data/icons/platforms")
+		  << QStringLiteral("../../data/icons/platforms");
 	QString iconDir;
 	for (const QString &root : iconRoots) {
-		if (QFile::exists(QDir(root).filePath(QStringLiteral("youtube.png")))) {
+		if (QFile::exists(QDir(root).filePath(QStringLiteral("youtube.svg")))) {
 			iconDir = root;
 			break;
 		}
 	}
-	expect(!iconDir.isEmpty(), "found bundled icon directory");
-	const char *names[] = {"youtube.png", "twitch.png", "tiktok.png", "instagram.png", "custom-rtmp.png",
-			       "youtube.svg", "twitch.svg", "tiktok.svg", "instagram.svg", "custom-rtmp.svg"};
+	expect(!iconDir.isEmpty(), "found bundled platform SVG directory");
+	const char *names[] = {"youtube.svg",         "twitch.svg",   "tiktok.svg",
+			       "tiktok-dark.svg",     "instagram.svg", "instagram-dark.svg",
+			       "custom-rtmp.svg",     "placeholder.svg"};
 	for (const char *n : names) {
 		const QString path = QDir(iconDir).filePath(QString::fromUtf8(n));
 		expect(QFile::exists(path), qPrintable(QStringLiteral("icon exists: %1").arg(n)));
@@ -73,8 +74,8 @@ int main()
 
 	/* Missing logo fallback path still returns custom icon */
 	expect(vsp::PlatformIconResource(static_cast<vsp::StreamPlatform>(99))
-		       .contains(QStringLiteral("custom-rtmp")),
-	       "unknown platform falls back to custom icon");
+		       .contains(QStringLiteral("placeholder")),
+	       "unknown platform falls back to placeholder icon");
 
 	/* URL / protocol validation */
 	QString err, field;

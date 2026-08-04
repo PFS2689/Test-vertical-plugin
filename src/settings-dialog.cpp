@@ -1,10 +1,15 @@
 #include "settings-dialog.hpp"
-#include <algorithm>
-#include <QUrl>
-#include <QIcon>
-#include <QHideEvent>
-#include <QDesktopServices>
 #include "credential-store.hpp"
+#include "platform-logo.hpp"
+#include "platform-selector.hpp"
+
+#include <algorithm>
+#include <QDesktopServices>
+#include <QGraphicsOpacityEffect>
+#include <QHideEvent>
+#include <QIcon>
+#include <QPropertyAnimation>
+#include <QUrl>
 
 #include <obs-module.h>
 
@@ -370,48 +375,80 @@ void SettingsDialog::BuildAutomationTab(QWidget *tab)
 void SettingsDialog::BuildStreamingTab(QWidget *tab)
 {
 	auto *lay = new QVBoxLayout(tab);
+	lay->setSpacing(14);
+	lay->setContentsMargins(8, 8, 8, 8);
 
-	auto *title = new QLabel(QString::fromUtf8(obs_module_text("VerticalStreamingDestination")), tab);
+	auto *hero = new QFrame(tab);
+	hero->setObjectName("vspStreamingHero");
+	hero->setStyleSheet(QStringLiteral(
+		"QFrame#vspStreamingHero {"
+		"  background: palette(base);"
+		"  border: 1px solid palette(mid);"
+		"  border-radius: 12px;"
+		"}"));
+	auto *heroLay = new QHBoxLayout(hero);
+	heroLay->setContentsMargins(16, 14, 16, 14);
+	heroLay->setSpacing(14);
+
+	selectedPlatformHero = new QLabel(hero);
+	selectedPlatformHero->setFixedSize(40, 40);
+	selectedPlatformHero->setAlignment(Qt::AlignCenter);
+
+	auto *heroText = new QVBoxLayout();
+	heroText->setSpacing(2);
+	auto *title = new QLabel(QString::fromUtf8(obs_module_text("VerticalStreamingDestination")), hero);
 	QFont tf = title->font();
 	tf.setPointSize(tf.pointSize() + 2);
 	tf.setBold(true);
 	title->setFont(tf);
-	lay->addWidget(title);
+	selectedPlatformTitle = new QLabel(hero);
+	selectedPlatformTitle->setStyleSheet(QStringLiteral("font-weight: 600;"));
+	heroText->addWidget(title);
+	heroText->addWidget(selectedPlatformTitle);
+	heroLay->addWidget(selectedPlatformHero, 0, Qt::AlignVCenter);
+	heroLay->addLayout(heroText, 1);
+	lay->addWidget(hero);
 
 	streamHelp = new QLabel(QString::fromUtf8(obs_module_text("StreamingHelpIndependent")), tab);
 	streamHelp->setWordWrap(true);
+	streamHelp->setStyleSheet(QStringLiteral("color: palette(window-text); opacity: 0.9;"));
 	lay->addWidget(streamHelp);
+
+	auto *destLabel = new QLabel(QString::fromUtf8(obs_module_text("DestinationPlatform")), tab);
+	destLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
+	lay->addWidget(destLabel);
+
+	platformSelector = new PlatformSelector(tab);
+	connect(platformSelector, &PlatformSelector::platformChanged, this, &SettingsDialog::OnPlatformChanged);
+	lay->addWidget(platformSelector);
 
 	secureStoreLabel = new QLabel(tab);
 	secureStoreLabel->setWordWrap(true);
 	lay->addWidget(secureStoreLabel);
 
+	platformPanel = new QWidget(tab);
+	platformPanelOpacity = new QGraphicsOpacityEffect(platformPanel);
+	platformPanelOpacity->setOpacity(1.0);
+	platformPanel->setGraphicsEffect(platformPanelOpacity);
+	platformPanelAnim = new QPropertyAnimation(platformPanelOpacity, "opacity", this);
+	platformPanelAnim->setDuration(180);
+	auto *panelLay = new QVBoxLayout(platformPanel);
+	panelLay->setContentsMargins(0, 4, 0, 0);
+	panelLay->setSpacing(12);
+
 	auto *form = new QFormLayout();
+	form->setHorizontalSpacing(16);
+	form->setVerticalSpacing(10);
 
-	platformCombo = new QComboBox(tab);
-	platformCombo->setIconSize(QSize(20, 20));
-	auto addPlatform = [&](vsp::StreamPlatform p) {
-		QIcon icon(vsp::PlatformIconResource(p));
-		platformCombo->addItem(icon, vsp::PlatformDisplayName(p), (int)p);
-	};
-	addPlatform(vsp::StreamPlatform::YouTube);
-	addPlatform(vsp::StreamPlatform::Twitch);
-	addPlatform(vsp::StreamPlatform::TikTok);
-	addPlatform(vsp::StreamPlatform::Instagram);
-	addPlatform(vsp::StreamPlatform::CustomRtmp);
-	connect(platformCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&SettingsDialog::OnPlatformChanged);
-	form->addRow(QString::fromUtf8(obs_module_text("DestinationPlatform")), platformCombo);
-
-	destinationPicker = new QComboBox(tab);
+	destinationPicker = new QComboBox(platformPanel);
 	connect(destinationPicker, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
 		&SettingsDialog::OnDestinationPickerChanged);
 	form->addRow(QString::fromUtf8(obs_module_text("SavedDestinations")), destinationPicker);
 
 	auto *destBtns = new QHBoxLayout();
-	auto *addBtn = new QPushButton(QString::fromUtf8(obs_module_text("AddDestination")), tab);
-	auto *renBtn = new QPushButton(QString::fromUtf8(obs_module_text("RenameDestination")), tab);
-	auto *delBtn = new QPushButton(QString::fromUtf8(obs_module_text("DeleteDestination")), tab);
+	auto *addBtn = new QPushButton(QString::fromUtf8(obs_module_text("AddDestination")), platformPanel);
+	auto *renBtn = new QPushButton(QString::fromUtf8(obs_module_text("RenameDestination")), platformPanel);
+	auto *delBtn = new QPushButton(QString::fromUtf8(obs_module_text("DeleteDestination")), platformPanel);
 	connect(addBtn, &QPushButton::clicked, this, &SettingsDialog::OnAddDestination);
 	connect(renBtn, &QPushButton::clicked, this, &SettingsDialog::OnRenameDestination);
 	connect(delBtn, &QPushButton::clicked, this, &SettingsDialog::OnDeleteDestination);
@@ -421,11 +458,11 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 	destBtns->addStretch(1);
 	form->addRow(QString(), destBtns);
 
-	statusCard = new QFrame(tab);
+	statusCard = new QFrame(platformPanel);
 	statusCard->setObjectName("vspStatusCard");
 	statusCard->setFrameShape(QFrame::StyledPanel);
 	statusCard->setStyleSheet(QStringLiteral(
-		"QFrame#vspStatusCard { background: palette(base); border: 1px solid palette(mid); border-radius: 6px; padding: 8px; }"));
+		"QFrame#vspStatusCard { background: palette(base); border: 1px solid palette(mid); border-radius: 10px; padding: 10px; }"));
 	auto *cardLay = new QVBoxLayout(statusCard);
 	statusCardLabel = new QLabel(statusCard);
 	statusCardLabel->setWordWrap(true);
@@ -434,58 +471,67 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 	cardLay->addWidget(liveStatusLabel);
 	form->addRow(QString::fromUtf8(obs_module_text("DestinationStatus")), statusCard);
 
-	destNameEdit = new QLineEdit(tab);
+	destNameEdit = new QLineEdit(platformPanel);
 	form->addRow(QString::fromUtf8(obs_module_text("DestinationName")), destNameEdit);
+	destNameRow = form->labelForField(destNameEdit);
 
-	twitchIngestCombo = new QComboBox(tab);
+	twitchIngestCombo = new QComboBox(platformPanel);
 	for (const auto &ing : vsp::TwitchIngestOptions())
 		twitchIngestCombo->addItem(ing.name, ing.id);
 	form->addRow(QString::fromUtf8(obs_module_text("TwitchIngest")), twitchIngestCombo);
+	twitchIngestRow = form->labelForField(twitchIngestCombo);
 
-	verticalServerEdit = new QLineEdit(tab);
+	verticalServerEdit = new QLineEdit(platformPanel);
 	verticalServerEdit->setPlaceholderText(QStringLiteral("rtmps://…"));
 	connect(verticalServerEdit, &QLineEdit::textChanged, this, [this](const QString &) {
 		UpdateProtocolIndicator();
 		UpdateDestinationStatusCard();
 	});
 	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamServer")), verticalServerEdit);
+	serverRow = form->labelForField(verticalServerEdit);
 
-	protocolLabel = new QLabel(tab);
+	protocolLabel = new QLabel(platformPanel);
 	form->addRow(QString::fromUtf8(obs_module_text("ProtocolIndicator")), protocolLabel);
+	protocolRow = form->labelForField(protocolLabel);
 
-	auto *keyRow = new QHBoxLayout();
-	verticalKeyEdit = new QLineEdit(tab);
+	keyRowWidget = new QWidget(platformPanel);
+	auto *keyRow = new QHBoxLayout(keyRowWidget);
+	keyRow->setContentsMargins(0, 0, 0, 0);
+	verticalKeyEdit = new QLineEdit(keyRowWidget);
 	verticalKeyEdit->setEchoMode(QLineEdit::Password);
 	verticalKeyEdit->setPlaceholderText(QString::fromUtf8(obs_module_text("StreamKeyPlaceholder")));
 	verticalKeyEdit->setToolTip(QString::fromUtf8(obs_module_text("StreamKeyTooltip")));
-	showKeyBtn = new QPushButton(QString::fromUtf8(obs_module_text("ShowKey")), tab);
+	showKeyBtn = new QPushButton(QString::fromUtf8(obs_module_text("ShowKey")), keyRowWidget);
 	showKeyBtn->setCheckable(true);
 	connect(showKeyBtn, &QPushButton::toggled, this, &SettingsDialog::OnToggleShowKey);
 	connect(verticalKeyEdit, &QLineEdit::textChanged, this, [this](const QString &) { UpdateDestinationStatusCard(); });
 	keyRow->addWidget(verticalKeyEdit, 1);
 	keyRow->addWidget(showKeyBtn);
-	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamKey")), keyRow);
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamKey")), keyRowWidget);
 
-	usernameEdit = new QLineEdit(tab);
-	passwordEdit = new QLineEdit(tab);
+	usernameEdit = new QLineEdit(platformPanel);
+	passwordEdit = new QLineEdit(platformPanel);
 	passwordEdit->setEchoMode(QLineEdit::Password);
 	form->addRow(QString::fromUtf8(obs_module_text("OptionalUsername")), usernameEdit);
 	form->addRow(QString::fromUtf8(obs_module_text("OptionalPassword")), passwordEdit);
+	usernameRow = form->labelForField(usernameEdit);
+	passwordRow = form->labelForField(passwordEdit);
 
-	lay->addLayout(form);
+	panelLay->addLayout(form);
 
-	platformNote = new QLabel(tab);
+	platformNote = new QLabel(platformPanel);
 	platformNote->setWordWrap(true);
-	lay->addWidget(platformNote);
+	platformNote->setStyleSheet(QStringLiteral("color: palette(mid);"));
+	panelLay->addWidget(platformNote);
 
-	platformHelpBtn = new QPushButton(tab);
+	platformHelpBtn = new QPushButton(platformPanel);
 	connect(platformHelpBtn, &QPushButton::clicked, this, &SettingsDialog::OnOpenPlatformHelp);
-	lay->addWidget(platformHelpBtn);
+	panelLay->addWidget(platformHelpBtn);
 
 	auto *actionRow = new QHBoxLayout();
-	testDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("TestConfiguration")), tab);
-	saveDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("SaveDestination")), tab);
-	clearCredBtn = new QPushButton(QString::fromUtf8(obs_module_text("ClearVerticalCredentials")), tab);
+	testDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("TestConfiguration")), platformPanel);
+	saveDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("SaveDestination")), platformPanel);
+	clearCredBtn = new QPushButton(QString::fromUtf8(obs_module_text("ClearVerticalCredentials")), platformPanel);
 	connect(testDestBtn, &QPushButton::clicked, this, &SettingsDialog::OnTestDestination);
 	connect(saveDestBtn, &QPushButton::clicked, this, &SettingsDialog::OnSaveDestination);
 	connect(clearCredBtn, &QPushButton::clicked, this, &SettingsDialog::OnClearCredentials);
@@ -493,11 +539,13 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 	actionRow->addWidget(saveDestBtn);
 	actionRow->addWidget(clearCredBtn);
 	actionRow->addStretch(1);
-	lay->addLayout(actionRow);
+	panelLay->addLayout(actionRow);
 
-	auto *warn = new QLabel(QString::fromUtf8(obs_module_text("IndependentStreamNote")), tab);
+	auto *warn = new QLabel(QString::fromUtf8(obs_module_text("IndependentStreamNote")), platformPanel);
 	warn->setWordWrap(true);
-	lay->addWidget(warn);
+	panelLay->addWidget(warn);
+
+	lay->addWidget(platformPanel);
 	lay->addStretch(1);
 }
 
@@ -561,7 +609,7 @@ void SettingsDialog::SyncFieldsFromSettings()
 	if (bufferStatusInSettings && outputs)
 		bufferStatusInSettings->setText(outputs->BufferStatusText());
 
-	if (platformCombo)
+	if (platformSelector)
 		SyncStreamingFields();
 
 	if (outputs) {
@@ -755,7 +803,7 @@ bool SettingsDialog::ValidateAndCommit(QString *error, QString *warning)
 
 	/* Persist destination metadata + secrets. Full destination validity is enforced on
 	 * Go Live / Test Configuration so canvas/clip settings can still be saved. */
-	if (platformCombo) {
+	if (platformSelector) {
 		PersistActiveDestinationSecrets();
 		HighlightInvalidField(QString());
 	}
@@ -834,8 +882,8 @@ void SettingsDialog::PersistActiveDestinationSecrets(bool applyPlatformFromCombo
 	d.id = settings.activeDestinationId;
 	if (const auto *ex = vsp::FindDestination(settings, d.id))
 		d = *ex;
-	if (applyPlatformFromCombo && platformCombo)
-		d.platform = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	if (applyPlatformFromCombo && platformSelector)
+		d.platform = platformSelector->platform();
 	if (destNameEdit)
 		d.name = destNameEdit->text().trimmed();
 	if (verticalServerEdit)
@@ -885,8 +933,8 @@ vsp::StreamDestination SettingsDialog::CurrentUiDestination(bool applyPlatformFr
 	d.id = settings.activeDestinationId;
 	if (const auto *ex = vsp::FindDestination(settings, d.id))
 		d = *ex;
-	if (applyPlatformFromCombo && platformCombo)
-		d.platform = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	if (applyPlatformFromCombo && platformSelector)
+		d.platform = platformSelector->platform();
 	if (destNameEdit)
 		d.name = destNameEdit->text().trimmed();
 	if (verticalServerEdit)
@@ -935,12 +983,9 @@ void SettingsDialog::SyncStreamingFields()
 	destinationPicker->blockSignals(false);
 
 	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
-	for (int i = 0; i < platformCombo->count(); ++i) {
-		if (platformCombo->itemData(i).toInt() == (int)d.platform) {
-			platformCombo->setCurrentIndex(i);
-			break;
-		}
-	}
+	if (platformSelector)
+		platformSelector->setPlatform(d.platform);
+	UpdateSelectedPlatformHero();
 	destNameEdit->setText(d.name);
 	verticalServerEdit->setText(d.server);
 	verticalKeyEdit->setText(d.streamKey);
@@ -1002,6 +1047,34 @@ void SettingsDialog::UpdateProtocolIndicator()
 		protocolLabel->setText(QString::fromUtf8(obs_module_text("UnsupportedProtocol")));
 }
 
+
+vsp::StreamPlatform SettingsDialog::SelectedPlatform() const
+{
+	if (platformSelector)
+		return platformSelector->platform();
+	return vsp::ActiveDestination(settings).platform;
+}
+
+void SettingsDialog::UpdateSelectedPlatformHero()
+{
+	const auto p = SelectedPlatform();
+	if (selectedPlatformHero)
+		selectedPlatformHero->setPixmap(vsp::LoadPlatformLogoPixmap(p, QSize(40, 40)));
+	if (selectedPlatformTitle)
+		selectedPlatformTitle->setText(vsp::PlatformDisplayName(p));
+}
+
+void SettingsDialog::AnimatePlatformPanel()
+{
+	if (!platformPanelAnim || !platformPanelOpacity)
+		return;
+	platformPanelAnim->stop();
+	platformPanelAnim->setStartValue(0.35);
+	platformPanelAnim->setEndValue(1.0);
+	platformPanelOpacity->setOpacity(0.35);
+	platformPanelAnim->start();
+}
+
 void SettingsDialog::FocusStreamingTab()
 {
 	if (tabs && streamingTabIndex >= 0)
@@ -1010,12 +1083,26 @@ void SettingsDialog::FocusStreamingTab()
 
 void SettingsDialog::ApplyPlatformFieldVisibility()
 {
-	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const auto p = SelectedPlatform();
 	const bool twitch = p == vsp::StreamPlatform::Twitch;
 	const bool custom = p == vsp::StreamPlatform::CustomRtmp;
-	twitchIngestCombo->setVisible(twitch);
-	usernameEdit->setVisible(custom);
-	passwordEdit->setVisible(custom);
+	const bool showServer = !twitch; /* Twitch uses ingest picker */
+
+	auto setRow = [](QWidget *field, QWidget *label, bool on) {
+		if (field)
+			field->setVisible(on);
+		if (label)
+			label->setVisible(on);
+	};
+
+	setRow(twitchIngestCombo, twitchIngestRow, twitch);
+	setRow(verticalServerEdit, serverRow, showServer);
+	setRow(protocolLabel, protocolRow, showServer || custom);
+	setRow(usernameEdit, usernameRow, custom);
+	setRow(passwordEdit, passwordRow, custom);
+	setRow(destNameEdit, destNameRow, true);
+	if (keyRowWidget)
+		keyRowWidget->setVisible(true);
 
 	QString note;
 	QString helpLabel;
@@ -1023,7 +1110,7 @@ void SettingsDialog::ApplyPlatformFieldVisibility()
 	case vsp::StreamPlatform::YouTube:
 		note = QString::fromUtf8(obs_module_text("YouTubeNote"));
 		helpLabel = QString::fromUtf8(obs_module_text("OpenYouTubeInstructions"));
-		if (verticalServerEdit->text().trimmed().isEmpty())
+		if (verticalServerEdit && verticalServerEdit->text().trimmed().isEmpty())
 			verticalServerEdit->setText(vsp::SuggestedYouTubeServer());
 		break;
 	case vsp::StreamPlatform::Twitch:
@@ -1043,9 +1130,14 @@ void SettingsDialog::ApplyPlatformFieldVisibility()
 		helpLabel = QString::fromUtf8(obs_module_text("CustomRtmpHelp"));
 		break;
 	}
-	platformNote->setText(note);
-	platformHelpBtn->setText(helpLabel);
-	platformHelpBtn->setVisible(!vsp::PlatformHelpUrl(p).isEmpty() || p == vsp::StreamPlatform::CustomRtmp);
+	if (platformNote)
+		platformNote->setText(note);
+	if (platformHelpBtn) {
+		platformHelpBtn->setText(helpLabel);
+		platformHelpBtn->setVisible(!vsp::PlatformHelpUrl(p).isEmpty() || custom);
+	}
+	UpdateSelectedPlatformHero();
+	UpdateProtocolIndicator();
 	UpdateDestinationStatusCard();
 }
 
@@ -1056,12 +1148,13 @@ void SettingsDialog::OnPlatformChanged(int)
 	/* Persist the currently edited destination before switching platforms.
 	 * Do not apply the new combo platform onto the previous destination. */
 	PersistActiveDestinationSecrets(false);
-	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const auto p = SelectedPlatform();
 	/* Prefer an existing destination for this platform */
 	for (int i = 0; i < settings.destinations.size(); ++i) {
 		if (settings.destinations[i].platform == p) {
 			settings.activeDestinationId = settings.destinations[i].id;
 			SyncStreamingFields();
+			AnimatePlatformPanel();
 			return;
 		}
 	}
@@ -1069,6 +1162,7 @@ void SettingsDialog::OnPlatformChanged(int)
 	settings.destinations.push_back(d);
 	settings.activeDestinationId = d.id;
 	SyncStreamingFields();
+	AnimatePlatformPanel();
 }
 
 void SettingsDialog::OnDestinationPickerChanged(int)
@@ -1088,7 +1182,7 @@ void SettingsDialog::OnToggleShowKey(bool checked)
 
 void SettingsDialog::OnOpenPlatformHelp()
 {
-	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const auto p = SelectedPlatform();
 	const QString url = vsp::PlatformHelpUrl(p);
 	if (!url.isEmpty())
 		QDesktopServices::openUrl(QUrl(url));
@@ -1124,7 +1218,7 @@ void SettingsDialog::OnClearCredentials()
 
 void SettingsDialog::OnAddDestination()
 {
-	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const auto p = SelectedPlatform();
 	vsp::StreamDestination d = vsp::MakeDefaultDestination(p);
 	d.name = QStringLiteral("%1 %2").arg(vsp::PlatformDisplayName(p)).arg(settings.destinations.size() + 1);
 	settings.destinations.push_back(d);

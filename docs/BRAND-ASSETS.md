@@ -1,44 +1,45 @@
 # Brand Assets & Trademark Notice — Vertical Shorts Plugin
 
-**Date obtained:** 2026-08-04  
+**Date obtained:** 2026-08-04 (updated for polished selector)  
 **Plugin version:** 1.4.0
 
-## Platform names and logos
+## Trademark disclaimer
 
 YouTube, Twitch, TikTok, Instagram, and related names and marks are trademarks of their respective owners. Vertical Shorts is an independent OBS Studio plugin and is **not** affiliated with, endorsed by, or sponsored by YouTube, Google, Twitch, Amazon, TikTok, ByteDance, Instagram, Meta, or any other platform listed in the destination selector.
 
-## Bundled destination icons
+## Platform logo assets (bundled SVG)
 
-| File | Description | Source | License / redistribution |
-|------|-------------|--------|--------------------------|
-| `data/icons/youtube.png` / `.svg` | Original simplified play-button mark (red rounded rectangle + white triangle) | Created for this project | Original work; **not** the official YouTube logo |
-| `data/icons/twitch.png` / `.svg` | Original simplified purple mark | Created for this project | Original work; **not** the official Twitch logo |
-| `data/icons/tiktok.png` / `.svg` | Original simplified dark mark with accent bars | Created for this project | Original work; **not** the official TikTok logo |
-| `data/icons/instagram.png` / `.svg` | Original simplified camera-style mark | Created for this project | Original work; **not** the official Instagram logo |
-| `data/icons/custom-rtmp.png` / `.svg` | Neutral network / server glyph | Created for this project | Original work |
+Assets live under `data/icons/platforms/` and are compiled into the plugin via `src/vsp-resources.qrc` (`:/vsp/platforms/...`).
 
-### Why original icons instead of official logos
+| File | Brand | Source | License / redistribution |
+|------|-------|--------|--------------------------|
+| `youtube.svg` | YouTube | [Simple Icons](https://simpleicons.org/) (`youtube`) with official brand fill `#FF0000` | SVG file CC0-1.0 via Simple Icons; mark is a trademark of Google LLC |
+| `twitch.svg` | Twitch | Simple Icons (`twitch`) with official brand fill `#9146FF` | SVG file CC0-1.0 via Simple Icons; mark is a trademark of Twitch Interactive, Inc. |
+| `tiktok.svg` / `tiktok-dark.svg` | TikTok | Simple Icons (`tiktok`) black / white fills for light & dark OBS themes | SVG file CC0-1.0 via Simple Icons; mark is a trademark of ByteDance Ltd. |
+| `instagram.svg` / `instagram-dark.svg` | Instagram | Simple Icons (`instagram`) brand coral / white fills for theme contrast | SVG file CC0-1.0 via Simple Icons; mark is a trademark of Meta Platforms, Inc. |
+| `custom-rtmp.svg` | Custom RTMP | Original globe/network glyph | Original work for this project |
+| `placeholder.svg` | Fallback | Original neutral person/frame glyph | Original work — shown if a logo resource is missing |
 
-Official brand logo redistribution is restricted by many platform brand guidelines. This plugin therefore ships **original, redistributable** icons that remain recognizable beside the platform **name in text**. Platform names are always shown next to icons; icons are never the sole indicator.
+### Simple Icons attribution
+
+- Project: https://github.com/simple-icons/simple-icons  
+- Package version used when obtained: **14.12.3** (jsDelivr npm CDN)  
+- License of the SVG files: **CC0 1.0 Universal**  
+- Obtained date: **2026-08-04**  
+- Brand trademark rights remain with the respective owners; CC0 covers the SVG artwork files as distributed by Simple Icons, not a grant of trademark permission beyond nominative UI identification.
 
 ### Asset rules followed
 
-- No scraping of logos from websites
+- No scraping of logos from brand websites
 - No hotlinking of remote logo files
 - No downloading of logos while the plugin is running
-- Bundled assets are static PNG and SVG image resources only
-- Icons have transparent backgrounds, consistent sizing (48×48 PNG), and are suitable for light and dark OBS themes
-- Vertical Shorts branding is not placed inside or over platform icons
-- Official logos are not altered (they are not bundled)
+- Bundled assets are static SVG (and legacy PNG) resources only
+- Logos are shown beside the platform **name in text** (never the sole indicator)
+- Transparent backgrounds; crisp SVG rendering via Qt Svg with device-pixel-ratio aware pixmaps
+- Theme-aware variants for TikTok / Instagram where a black mark would be invisible on dark OBS themes
+- Missing resources fall back to `placeholder.svg`
+- Vertical Shorts branding is not placed inside or over platform logos
 
 ## Required user setup (platforms)
 
-Users must obtain livestream server URLs and stream keys from each platform’s official dashboard when available:
-
-- **YouTube:** YouTube Studio livestream / stream settings (vertical stream key is separate from horizontal when configured that way)
-- **Twitch:** Creator Dashboard → Stream key
-- **TikTok:** TikTok LIVE Studio / RTMP access when the account is eligible
-- **Instagram:** Supported external streaming / stream-key features when available for the account
-- **Custom RTMP:** Any user-operated or third-party RTMP/RTMPS ingest
-
-Eligibility for RTMP access varies by account, region, and platform policy. This plugin does not invent undocumented endpoints and does not claim every account has stream-key access.
+Users must obtain livestream server URLs and stream keys from each platform’s official dashboard when available. Eligibility for RTMP access varies by account, region, and platform policy.

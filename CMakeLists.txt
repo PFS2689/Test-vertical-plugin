@@ -23,12 +23,8 @@ if(ENABLE_FRONTEND_API)
 endif()
 
 if(ENABLE_QT)
-  find_package(Qt6 REQUIRED COMPONENTS Widgets Core Gui)
-  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Gui)
-  find_package(Qt6 COMPONENTS Svg QUIET)
-  if(TARGET Qt6::Svg)
-    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Svg)
-  endif()
+  find_package(Qt6 REQUIRED COMPONENTS Widgets Core Gui Svg)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Gui Qt6::Svg)
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
     PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -58,6 +54,10 @@ target_sources(
     src/stream-destination.hpp
     src/credential-store.cpp
     src/credential-store.hpp
+    src/platform-logo.cpp
+    src/platform-logo.hpp
+    src/platform-selector.cpp
+    src/platform-selector.hpp
     src/settings-dialog.cpp
     src/settings-dialog.hpp
     src/vertical-outputs.cpp
