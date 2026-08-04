@@ -5,6 +5,7 @@
 #include "vertical-outputs.hpp"
 
 #include <QDialog>
+#include <QHideEvent>
 #include <QStringList>
 
 class QComboBox;
