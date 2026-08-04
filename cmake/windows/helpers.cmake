@@ -49,7 +49,8 @@ function(set_target_properties_plugin target)
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/rundir/$<CONFIG>"
     COMMAND
       "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:${target}>"
-      "$<$<CONFIG:Debug,RelWithDebInfo,Release>:$<TARGET_PDB_FILE:${target}>>"
+      # Release uses /DEBUG:NONE — no PDB is produced for shipping builds.
+      "$<$<CONFIG:Debug,RelWithDebInfo>:$<TARGET_PDB_FILE:${target}>>"
       "${CMAKE_CURRENT_BINARY_DIR}/rundir/$<CONFIG>"
     COMMENT "Copy ${target} to rundir"
     VERBATIM

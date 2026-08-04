@@ -223,7 +223,7 @@ jobs:
             echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
             echo "### Safety analysis"
-            echo "- **ClamAV malware scan: CLEAN** (zip and Setup.exe; release is blocked if anything is flagged)"
+            echo "- **Windows Defender + ClamAV malware scans: CLEAN** (zip, Setup.exe, and DLL; release is blocked if anything is flagged)"
             echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
             echo "- It only copies the plugin into \`%APPDATA%\\obs-studio\\plugins\` (per-user, no Administrator rights)"
             echo "- No downloads, no Run-key changes, no bundled third-party stub"
