@@ -99,6 +99,13 @@ function Build-CleanSetupExe {
     # Copy header next to generated rc so rc.exe can include it easily.
     Copy-Item -Force $HeaderPath (Join-Path $workDir 'setup_resources.h')
 
+    # Avoid /D string-quoting pitfalls on cmd.exe — emit a tiny header instead.
+    $versionHeader = @"
+#pragma once
+#define VSP_SETUP_VERSION_A "$ProductVersion"
+"@
+    Set-Content -Path (Join-Path $workDir 'setup_version.h') -Value $versionHeader -Encoding ascii
+
     $outExe = Join-Path $ProjectRoot "release\${SetupName}.exe"
     if ( Test-Path $outExe ) {
         Remove-Item -Force $outExe
@@ -106,13 +113,15 @@ function Build-CleanSetupExe {
 
     $includeDir = Join-Path $ProjectRoot 'src\windows-setup'
     $vcvars = Get-VcVarsBat
+    $resPath = Join-Path $workDir 'setup.res'
 
     $batch = @"
 @echo off
 setlocal
 call "$vcvars" || exit /b 1
 cd /d "$workDir" || exit /b 1
-cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /DVSP_SETUP_VERSION_A="$ProductVersion" /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" "$rcPath" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%_PDB% /INCREMENTAL:NO user32.lib shell32.lib
+rc.exe /nologo /i"$includeDir" /i"$workDir" /fo"$resPath" "$rcPath" || exit /b 1
+cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%_PDB% /INCREMENTAL:NO "$resPath" user32.lib shell32.lib
 exit /b %ERRORLEVEL%
 "@
     $batPath = Join-Path $workDir 'build-setup.bat'
