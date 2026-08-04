@@ -1355,10 +1355,7 @@ void ShortsDock::HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind)
 		return;
 	if (info.result == ClipSaveResult::PartialAvailable) {
 		const auto reply = QMessageBox::question(
-			this, title,
-			info.message + QStringLiteral("
-
-") + Translate("SaveAvailablePortion"),
+			this, title, info.message + QStringLiteral("\n\n") + Translate("SaveAvailablePortion"),
 			QMessageBox::Yes | QMessageBox::No);
 		if (reply == QMessageBox::Yes && outputs) {
 			const ClipSaveInfo again = outputs->SaveClipOfDuration(info.availableSeconds, kind, true);
