@@ -31,10 +31,7 @@
 #include <strsafe.h>
 
 #include "setup_resources.h"
-
-#ifndef VSP_SETUP_VERSION_A
-#define VSP_SETUP_VERSION_A "0.0.0"
-#endif
+#include "setup_version.h"
 
 static void ShowError(HWND owner, const wchar_t *text)
 {
