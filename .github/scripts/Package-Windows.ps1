@@ -121,7 +121,7 @@ setlocal
 call "$vcvars" || exit /b 1
 cd /d "$workDir" || exit /b 1
 rc.exe /nologo /i"$includeDir" /i"$workDir" /fo"$resPath" "$rcPath" || exit /b 1
-cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%_PDB% /INCREMENTAL:NO "$resPath" user32.lib shell32.lib
+cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%%_PDB%% /INCREMENTAL:NO "$resPath" user32.lib shell32.lib
 exit /b %ERRORLEVEL%
 "@
     $batPath = Join-Path $workDir 'build-setup.bat'
