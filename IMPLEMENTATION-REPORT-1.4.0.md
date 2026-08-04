@@ -78,7 +78,11 @@ Original redistributable PNG/SVG icons (not official brand marks). See `docs/BRA
 - No runtime logo downloads, no Defender exclusions, no packing/obfuscation, no PowerShell credential hacks, no bundled executables beyond the existing installer, no background services
 - Build Release/RelWithDebInfo via existing Windows CI; ClamAV release gate unchanged
 
-## Remaining platform limitations
+## Build / test results
+
+- Local unit tests (Linux/Qt): settings, stream_destination, mixer_model, credential_store — all passed
+- Windows CI (RelWithDebInfo + `vsp_tests` + ctest): **passed** on `cursor/independent-stream-dest-11e0`
+- ClamAV: unchanged release packaging gate (runs on published releases; no new executables or runtime downloads added)
 
 - Users must obtain livestream credentials from each platform; not every account has RTMP access
 - Test Configuration cannot prove a stream key is accepted without going live
