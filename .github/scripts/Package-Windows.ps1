@@ -26,18 +26,127 @@ if ( $PSVersionTable.PSVersion -lt '7.2.0' ) {
     exit 2
 }
 
+function Get-VcVarsBat {
+    $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if ( ! ( Test-Path $vswhere ) ) {
+        throw "vswhere.exe not found; Visual Studio Build Tools are required."
+    }
+    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ( ! $vsPath ) {
+        throw "Visual Studio installation with MSVC tools not found."
+    }
+    $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
+    if ( ! ( Test-Path $vcvars ) ) {
+        throw "vcvars64.bat not found at $vcvars"
+    }
+    return $vcvars
+}
+
+function Build-CleanSetupExe {
+    param(
+        [string] $ProjectRoot,
+        [string] $ReleaseDir,
+        [string] $ProductVersion,
+        [string] $SetupName
+    )
+
+    $PluginId = 'obs-shorts-vertical'
+    $DllPath = Join-Path $ReleaseDir "$PluginId\bin\64bit\obs-shorts-vertical.dll"
+    $LocalePath = Join-Path $ReleaseDir "$PluginId\data\locale\en-US.ini"
+    $InstallTxt = Join-Path $ReleaseDir 'INSTALL.txt'
+    $ManifestPath = Join-Path $ProjectRoot 'src\windows-setup\setup.manifest'
+    $SetupSrc = Join-Path $ProjectRoot 'src\windows-setup\setup.c'
+    $RcTemplate = Join-Path $ProjectRoot 'src\windows-setup\setup.rc.in'
+    $HeaderPath = Join-Path $ProjectRoot 'src\windows-setup\setup_resources.h'
+
+    foreach ($p in @($DllPath, $LocalePath, $InstallTxt, $ManifestPath, $SetupSrc, $RcTemplate, $HeaderPath)) {
+        if ( ! ( Test-Path $p ) ) {
+            throw "Required setup payload/source missing: $p"
+        }
+    }
+
+    $parts = $ProductVersion.Split('.')
+    if ( $parts.Count -lt 3 ) {
+        throw "Plugin version must be MAJOR.MINOR.PATCH (got '$ProductVersion')"
+    }
+    $verMajor = [int]$parts[0]
+    $verMinor = [int]$parts[1]
+    $verPatch = [int]$parts[2]
+
+    $workDir = Join-Path $ProjectRoot "release\setup-build"
+    if ( Test-Path $workDir ) {
+        Remove-Item -Recurse -Force $workDir
+    }
+    New-Item -ItemType Directory -Path $workDir | Out-Null
+
+    # Resource compiler needs doubled backslashes in quoted path strings.
+    function Escape-RcPath([string] $Path) {
+        return $Path.Replace('\', '\\')
+    }
+
+    $rc = Get-Content -Raw -Path $RcTemplate
+    $rc = $rc.Replace('PAYLOAD_DLL_PATH', (Escape-RcPath $DllPath))
+    $rc = $rc.Replace('PAYLOAD_LOCALE_PATH', (Escape-RcPath $LocalePath))
+    $rc = $rc.Replace('PAYLOAD_INSTALL_TXT_PATH', (Escape-RcPath $InstallTxt))
+    $rc = $rc.Replace('PAYLOAD_MANIFEST_PATH', (Escape-RcPath $ManifestPath))
+    $rc = $rc.Replace('PAYLOAD_VER_MAJOR', "$verMajor")
+    $rc = $rc.Replace('PAYLOAD_VER_MINOR', "$verMinor")
+    $rc = $rc.Replace('PAYLOAD_VER_PATCH', "$verPatch")
+    $rc = $rc.Replace('PAYLOAD_VER_STRING', "$ProductVersion")
+    $rcPath = Join-Path $workDir 'setup.rc'
+    Set-Content -Path $rcPath -Value $rc -Encoding ascii
+
+    # Copy header next to generated rc so rc.exe can include it easily.
+    Copy-Item -Force $HeaderPath (Join-Path $workDir 'setup_resources.h')
+
+    $outExe = Join-Path $ProjectRoot "release\${SetupName}.exe"
+    if ( Test-Path $outExe ) {
+        Remove-Item -Force $outExe
+    }
+
+    $includeDir = Join-Path $ProjectRoot 'src\windows-setup'
+    $vcvars = Get-VcVarsBat
+
+    $batch = @"
+@echo off
+setlocal
+call "$vcvars" || exit /b 1
+cd /d "$workDir" || exit /b 1
+cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /DVSP_SETUP_VERSION_A="$ProductVersion" /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" "$rcPath" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%_PDB% /INCREMENTAL:NO user32.lib shell32.lib
+exit /b %ERRORLEVEL%
+"@
+    $batPath = Join-Path $workDir 'build-setup.bat'
+    Set-Content -Path $batPath -Value $batch -Encoding ascii
+
+    Log-Group "Building clean MSVC Setup.exe (no Inno Setup)..."
+    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', "`"$batPath`"") -Wait -PassThru -NoNewWindow
+    if ( $proc.ExitCode -ne 0 ) {
+        throw "Setup.exe compile failed with exit code $($proc.ExitCode)"
+    }
+    if ( ! ( Test-Path $outExe ) ) {
+        throw "Setup.exe was not created at $outExe"
+    }
+
+    # Drop compiler junk from release/
+    Get-ChildItem -Path $workDir -ErrorAction SilentlyContinue | Out-Null
+    Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
+    Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.obj' -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.pdb' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'Vertical-Shorts-Plugin-Setup*' } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    Log-Group
+}
+
 function Package {
     trap {
         Write-Error $_
         exit 2
     }
 
-    $ScriptHome = $PSScriptRoot
     $ProjectRoot = Resolve-Path -Path "$PSScriptRoot/../.."
     $BuildSpecFile = "${ProjectRoot}/buildspec.json"
 
     $UtilityFunctions = Get-ChildItem -Path $PSScriptRoot/utils.pwsh/*.ps1 -Recurse
-
     foreach( $Utility in $UtilityFunctions ) {
         Write-Debug "Loading $($Utility.FullName)"
         . $Utility.FullName
@@ -70,6 +179,7 @@ function Package {
             "${ProjectRoot}/release/VerticalShortsPlugin-*"
             "${ProjectRoot}/release/ShortsVertical-*"
             "${ProjectRoot}/release/Package"
+            "${ProjectRoot}/release/setup-build"
         )
     }
     Remove-Item @RemoveArgs -Recurse
@@ -86,51 +196,7 @@ function Package {
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipStable}.zip"
     Log-Group
 
-    $IsccFile = "${ProjectRoot}/build_${Target}/installer-Windows.iss"
-    if ( ! ( Test-Path -Path $IsccFile ) ) {
-        throw "InnoSetup script not found at ${IsccFile}. Build the project first."
-    }
-
-    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
-    if ( -not $iscc ) {
-        $candidates = @(
-            "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-            "${Env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe"
-        )
-        foreach ($c in $candidates) {
-            if (Test-Path $c) {
-                $iscc = $c
-                break
-            }
-        }
-    } else {
-        $iscc = $iscc.Source
-    }
-
-    if ( -not $iscc ) {
-        throw "Inno Setup compiler (iscc) not found. Install Inno Setup 6."
-    }
-
-    Log-Group "Creating clean Inno Setup installer..."
-    Push-Location -Stack BuildTemp
-    Ensure-Location -Path "${ProjectRoot}/release"
-
-    Copy-Item -Path $Configuration -Destination Package -Recurse
-    if (Test-Path "Package/INSTALL.txt") {
-        Remove-Item -Force "Package/INSTALL.txt"
-    }
-    Get-ChildItem -Path Package -Recurse -Filter *.pdb -ErrorAction SilentlyContinue |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-
-    Invoke-External $iscc $IsccFile "/O${ProjectRoot}/release" "/F${SetupName}"
-
-    Remove-Item -Path Package -Recurse -Force
-    Pop-Location -Stack BuildTemp
-
-    if ( ! ( Test-Path "${ProjectRoot}/release/${SetupName}.exe" ) ) {
-        throw "Installer was not created: ${SetupName}.exe"
-    }
-    Log-Group
+    Build-CleanSetupExe -ProjectRoot $ProjectRoot -ReleaseDir $ReleaseDir -ProductVersion $ProductVersion -SetupName $SetupName
 }
 
 Package

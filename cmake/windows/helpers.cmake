@@ -64,15 +64,6 @@ function(set_target_properties_plugin target)
 
   configure_file(cmake/windows/resources/resource.rc.in "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.rc")
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.rc")
-
-  # Generate a clean Inno Setup script (scanned + published as Setup.exe)
-  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/buildspec.json" _buildspec_json)
-  string(JSON UUID_APP GET ${_buildspec_json} uuids windowsApp)
-  configure_file(
-    cmake/windows/resources/installer-Windows.iss.in
-    "${CMAKE_CURRENT_BINARY_DIR}/installer-Windows.iss"
-    @ONLY
-  )
 endfunction()
 
 # Helper function to add resources into bundle

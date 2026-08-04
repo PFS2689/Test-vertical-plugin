@@ -85,11 +85,16 @@ jobs:
           fi
           test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
 
-          # Setup.exe must be a PE binary and a reasonable size
+          # Setup.exe must be a PE binary, not an Inno Setup stub, and a reasonable size
           file release-assets/Vertical-Shorts-Plugin-Setup.exe | tee /tmp/setup-file.txt
           grep -qiE 'PE32|executable|MS Windows' /tmp/setup-file.txt
+          if strings release-assets/Vertical-Shorts-Plugin-Setup.exe | grep -qi 'Inno Setup Setup Data'; then
+            echo "ERROR: Setup.exe still looks like an Inno Setup installer" >&2
+            exit 1
+          fi
           size=$(stat -c%s release-assets/Vertical-Shorts-Plugin-Setup.exe)
-          if [[ "$size" -lt 200000 || "$size" -gt 20000000 ]]; then
+          # Custom MSVC installer embeds the DLL (~100KB+) plus a small stub
+          if [[ "$size" -lt 40000 || "$size" -gt 5000000 ]]; then
             echo "ERROR: Setup.exe size looks wrong: $size bytes" >&2
             exit 1
           fi
@@ -131,35 +136,33 @@ jobs:
             echo
             echo "### Download"
             echo
-            echo "- **ZIP (recommended — lowest Defender false-positive risk):** [Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)"
-            echo "- **Optional Setup.exe:** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)"
+            echo "- **Setup.exe (recommended):** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)"
+            echo "- **Manual ZIP:** [Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)"
             echo
-            echo "### Install (zip — recommended)"
+            echo "### Install (Setup.exe)"
+            echo "1. Close OBS Studio"
+            echo "2. Run \`Vertical-Shorts-Plugin-Setup.exe\`"
+            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Install (zip)"
             echo "1. Close OBS"
             echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
             echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
             echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
-            echo "### Install (Setup.exe — optional)"
-            echo "1. Close OBS Studio"
-            echo "2. Run \`Vertical-Shorts-Plugin-Setup.exe\`"
-            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
-            echo
             echo "### Safety analysis"
             echo "- **ClamAV malware scan: CLEAN** (zip and Setup.exe; release is blocked if anything is flagged)"
-            echo "- Package contents: OBS plugin DLL + locale + INSTALL.txt only"
-            echo "- Installer is per-user only (no Administrator rights) and writes only to \`%APPDATA%\\obs-studio\\plugins\`"
-            echo "- Setup.exe uses ZIP compression (not LZMA/solid) to reduce known Inno Setup Defender ML false positives"
+            echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
+            echo "- It only copies the plugin into \`%APPDATA%\\obs-studio\\plugins\` (per-user, no Administrator rights)"
+            echo "- No downloads, no Run-key changes, no bundled third-party stub"
+            echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
             echo "- Source code: https://github.com/${{ github.repository }}"
-            echo
-            echo "### If Windows Defender flags Setup.exe"
-            echo "That is a known **false positive** pattern for unsigned Inno Setup installers (often \`Trojan:Win32/Wacatac.B!ml\`)."
-            echo "Do **not** disable Defender. Use the ZIP instead, or [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission)."
             echo
             echo "### Windows SmartScreen note"
             echo "Because this open-source build is **not Authenticode-signed**, Windows may show **\"Windows protected your PC\" / Unknown publisher**."
             echo "That is a reputation warning for new unsigned software — **not** a confirmed malware detection."
             echo "Click **More info → Run anyway** if you trust this GitHub release."
+            echo "Do **not** disable Windows Defender. You can [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission) if needed."
             echo
             echo "### Checksums (SHA-256)"
             for f in release-assets/*; do
