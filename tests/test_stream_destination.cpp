@@ -22,11 +22,15 @@ static void expect(bool cond, const char *msg)
 int main()
 {
 	/* Masking / logging safety */
-	expect(vsp::MaskSecret(QStringLiteral("abcdefghij")) == QStringLiteral("****ghij"), "mask keeps tail");
+	expect(vsp::MaskSecret(QStringLiteral("abcdefghij")) == QStringLiteral("****"), "default mask fully hides secret");
+	expect(vsp::MaskSecret(QStringLiteral("abcdefghij"), 4) == QStringLiteral("****ghij"), "optional keepTail");
 	expect(vsp::MaskSecret(QStringLiteral("ab")) == QStringLiteral("****"), "short secret fully masked");
 	expect(vsp::MaskSecret(QString()).contains(QStringLiteral("empty")), "empty secret labeled");
 	expect(!vsp::MaskSecret(QStringLiteral("super-secret-key-xyz")).contains(QStringLiteral("super-secret")),
 	       "masked key never shows full secret");
+	expect(!vsp::SanitizeUserFacingError(QStringLiteral("fail rtmps://user:pass@host/app key=abc"))
+			.contains(QStringLiteral("pass")),
+	       "user-facing errors strip credentials");
 
 	const QString sanitized =
 		vsp::SanitizeUrlForLog(QStringLiteral("rtmp://user:pass@ingest.example/app?token=1"));

@@ -82,6 +82,10 @@ int main()
 	QString pathErr;
 	/* recording path validation helper coverage via DefaultRecordingPath emptiness in test mode */
 	expect(vsp::DefaultRecordingPath().isEmpty(), "test build has empty default path");
+	expect(vsp::ValidateRecordingPath(QString(), &pathErr), "empty recording path ok");
+	expect(vsp::ValidateRecordingPath(QStringLiteral("/tmp/vertical-recordings"), &pathErr), "normal path ok");
+	expect(!vsp::ValidateRecordingPath(QStringLiteral("\\\\.\\PhysicalDrive0"), &pathErr),
+	       "device path rejected");
 
 	if (failures) {
 		std::cerr << failures << " test(s) failed\n";

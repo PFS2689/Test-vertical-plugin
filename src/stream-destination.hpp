@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QRegularExpression>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -118,13 +119,24 @@ inline QList<TwitchIngest> TwitchIngestOptions()
 	};
 }
 
-inline QString MaskSecret(const QString &secret, int keepTail = 4)
+/* Fully mask secrets for logs / diagnostics. keepTail is clamped to 0 for log use. */
+inline QString MaskSecret(const QString &secret, int keepTail = 0)
 {
 	if (secret.isEmpty())
 		return QStringLiteral("(empty)");
-	if (secret.size() <= keepTail)
+	if (keepTail <= 0 || secret.size() <= keepTail)
 		return QStringLiteral("****");
 	return QStringLiteral("****") + secret.right(keepTail);
+}
+
+inline QString SanitizeUserFacingError(const QString &message)
+{
+	QString s = message;
+	/* Strip obvious credential-bearing URL forms from OBS/output errors. */
+	s.replace(QRegularExpression(QStringLiteral("rtmps?://[^\\s]+")), QStringLiteral("rtmp(s)://***"));
+	s.replace(QRegularExpression(QStringLiteral("(?i)(stream[_ ]?key|password|token)\\s*[:=]\\s*\\S+")),
+		  QStringLiteral("\\1=****"));
+	return s;
 }
 
 inline QString SanitizeUrlForLog(const QString &url)
@@ -172,12 +184,17 @@ inline bool ProtocolSupported(const QString &url, QString *error = nullptr)
 	return false;
 }
 
-inline bool ValidateServerUrl(const QString &url, QString *error = nullptr)
+inline bool ValidateServerUrl(const QString &url, QString *error = nullptr, QString *warning = nullptr)
 {
 	const QString s = url.trimmed();
 	if (s.isEmpty()) {
 		if (error)
 			*error = QStringLiteral("Server URL is required.");
+		return false;
+	}
+	if (s.contains(QChar('\0'))) {
+		if (error)
+			*error = QStringLiteral("Server URL contains invalid characters.");
 		return false;
 	}
 	if (!ProtocolSupported(s, error))
@@ -188,15 +205,20 @@ inline bool ValidateServerUrl(const QString &url, QString *error = nullptr)
 			*error = QStringLiteral("Server URL is not a valid RTMP/RTMPS address.");
 		return false;
 	}
+	if (s.startsWith(QStringLiteral("rtmp://"), Qt::CaseInsensitive) && warning) {
+		*warning = QStringLiteral(
+			"This destination uses unencrypted RTMP. Prefer RTMPS when the platform supports it.");
+	}
 	return true;
 }
 
-inline bool ValidateDestination(const StreamDestination &d, QString *error = nullptr, QString *field = nullptr)
+inline bool ValidateDestination(const StreamDestination &d, QString *error = nullptr, QString *field = nullptr,
+				QString *warning = nullptr)
 {
 	if (d.name.trimmed().isEmpty() && d.platform == StreamPlatform::CustomRtmp) {
 		/* name optional for presets; custom encouraged but not required */
 	}
-	if (!ValidateServerUrl(d.server, error)) {
+	if (!ValidateServerUrl(d.server, error, warning)) {
 		if (field)
 			*field = QStringLiteral("server");
 		return false;

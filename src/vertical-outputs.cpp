@@ -34,7 +34,21 @@ QString SanitizeFilenamePart(QString s)
 		s.replace(c, QLatin1Char('_'));
 	s.replace(QLatin1Char('\n'), QLatin1Char('_'));
 	s.replace(QLatin1Char('\r'), QLatin1Char('_'));
-	return s.trimmed();
+	s.replace(QChar('\0'), QLatin1Char('_'));
+	/* Collapse path separators that could escape the recording directory. */
+	s.replace(QLatin1Char('/'), QLatin1Char('_'));
+	s.replace(QLatin1Char('\\'), QLatin1Char('_'));
+	s = s.trimmed();
+	if (s.isEmpty() || s == QStringLiteral(".") || s == QStringLiteral(".."))
+		s = QStringLiteral("output");
+	return s;
+}
+
+QString SanitizeOutputError(const char *err)
+{
+	if (!err || !*err)
+		return QStringLiteral("Failed to start vertical stream.");
+	return vsp::SanitizeUserFacingError(QString::fromUtf8(err));
 }
 
 EncoderPair MakeEncoders(video_t *video, bool forStreaming, QString *encoderName, int *vBitrate, int *aBitrate,
@@ -172,10 +186,13 @@ void VerticalOutputs::ApplySettings(const vsp::PluginSettings &s, bool *bufferRe
 QString VerticalOutputs::ResolveRecordingDirectory() const
 {
 	QString path = settings.recordingPath.trimmed();
+	if (!vsp::ValidateRecordingPath(path))
+		path.clear();
 	if (path.isEmpty())
 		path = vsp::DefaultRecordingPath();
 	if (path.isEmpty())
 		path = QDir::homePath();
+	path = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
 	QDir().mkpath(path);
 	return path;
 }
@@ -189,6 +206,12 @@ QString VerticalOutputs::MakeOutputFilename(const QString &outputType, int durat
 		base += QStringLiteral("_%1s").arg(durationSeconds);
 
 	QString path = QDir(dir).filePath(base + QStringLiteral(".mp4"));
+	/* Ensure resolved file stays under the recording directory. */
+	const QString canonicalDir = QDir(dir).canonicalPath();
+	const QString absolute = QFileInfo(path).absoluteFilePath();
+	if (!canonicalDir.isEmpty() && !absolute.startsWith(canonicalDir)) {
+		path = QDir(dir).filePath(QStringLiteral("VerticalShorts_%1.mp4").arg(stamp));
+	}
 	int n = 1;
 	while (QFileInfo::exists(path)) {
 		path = QDir(dir).filePath(QStringLiteral("%1_%2.mp4").arg(base).arg(n++));
@@ -258,6 +281,8 @@ bool VerticalOutputs::TestStreamDestination(QString *summary, QString *error) co
 		return false;
 	obs_service_release(svc);
 
+	QString warn;
+	vsp::ValidateDestination(d, nullptr, nullptr, &warn);
 	if (summary) {
 		*summary = QStringLiteral(
 			"Local configuration valid\n"
@@ -273,6 +298,8 @@ bool VerticalOutputs::TestStreamDestination(QString *summary, QString *error) co
 			     d.server.startsWith(QStringLiteral("rtmps://"), Qt::CaseInsensitive)
 				     ? QStringLiteral("RTMPS")
 				     : QStringLiteral("RTMP"));
+		if (!warn.isEmpty())
+			*summary += QStringLiteral("\n\nWarning: ") + warn;
 	}
 	blog(LOG_INFO, "[obs-shorts-vertical] Test destination OK platform=%s host=%s key=configured",
 	     vsp::PlatformDisplayName(d.platform).toUtf8().constData(),
@@ -427,8 +454,7 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	if (!obs_output_start(streamOutput)) {
 		const char *err = obs_output_get_last_error(streamOutput);
 		if (error)
-			*error = err && *err ? QString::fromUtf8(err)
-					     : QStringLiteral("Failed to start vertical stream.");
+			*error = SanitizeOutputError(err);
 		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream start failed (credentials never logged)");
 		SetLiveStatus(vsp::VerticalLiveStatus::Error);
 		return false;

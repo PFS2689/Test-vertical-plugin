@@ -1,8 +1,9 @@
 #pragma once
 
+#include <QFileInfo>
+#include <QList>
 #include <QString>
 #include <QStringList>
-#include <QList>
 #include <QUuid>
 #include <cstdint>
 
@@ -308,6 +309,32 @@ inline bool ValidateAutoDurationSeconds(int seconds, QString *error)
 	return true;
 }
 
+/* Reject empty / null / clearly unsafe recording folder inputs. Absolute user paths are allowed. */
+inline bool ValidateRecordingPath(const QString &path, QString *error = nullptr)
+{
+	const QString t = path.trimmed();
+	if (t.isEmpty())
+		return true; /* empty => OBS default */
+	if (t.contains(QChar('\0'))) {
+		if (error)
+			*error = QStringLiteral("Recording path contains invalid characters.");
+		return false;
+	}
+	/* Disallow device paths / alternate data stream style tricks on Windows. */
+	if (t.contains(QStringLiteral("\\\\.\\")) || t.contains(QStringLiteral("\\\\?\\"))) {
+		if (error)
+			*error = QStringLiteral("Recording path is not allowed.");
+		return false;
+	}
+	const QFileInfo fi(t);
+	if (fi.fileName() == QStringLiteral(".") || fi.fileName() == QStringLiteral("..")) {
+		if (error)
+			*error = QStringLiteral("Recording path is not valid.");
+		return false;
+	}
+	return true;
+}
+
 inline bool IsPortrait(uint32_t w, uint32_t h)
 {
 	return h > w;
@@ -552,6 +579,11 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 	} else if (s.activeDestinationId.isEmpty()) {
 		s.activeDestinationId = s.destinations.first().id;
 	}
+
+	/* Scrub legacy insecure keys from the live settings object immediately on load. */
+	obs_data_erase(data, "vertical_stream_key");
+	obs_data_erase(data, "stream_dest_mode");
+	obs_data_erase(data, "vertical_stream_server");
 
 	s.automationEnabled = obs_data_get_bool(data, "automation_enabled");
 	s.autoStartOnMainStream = obs_data_get_bool(data, "auto_start_main_stream");

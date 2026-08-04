@@ -787,6 +787,8 @@ bool SettingsDialog::ValidateAndCommit(QString *error, QString *warning)
 	}
 
 	settings.recordingPath = pathEdit->text().trimmed();
+	if (!vsp::ValidateRecordingPath(settings.recordingPath, error))
+		return false;
 	settings.clipBufferEnabled = clipBufferCheck->isChecked();
 	if (autoStartBufferCheck)
 		settings.autoStartClipBuffer = autoStartBufferCheck->isChecked();

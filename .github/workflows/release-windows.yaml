@@ -21,6 +21,14 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout for version check
+        if: github.ref_type == 'tag'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            buildspec.json
+          sparse-checkout-cone-mode: false
+
       - name: Validate tag
         id: check
         shell: bash
@@ -42,6 +50,15 @@ jobs:
               ;;
           esac
           echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          # Tag must match buildspec.json version (allow -betaN / -rcN suffix).
+          if [[ -f buildspec.json ]]; then
+            spec_ver=$(python3 -c 'import json; print(json.load(open("buildspec.json"))["version"])')
+            tag_base="${GITHUB_REF_NAME%%-*}"
+            if [[ "$tag_base" != "$spec_ver" ]]; then
+              echo "ERROR: tag base '$tag_base' does not match buildspec version '$spec_ver'" >&2
+              exit 1
+            fi
+          fi
 
       - name: Download artifacts
         if: steps.check.outputs.valid == 'true'
@@ -78,11 +95,22 @@ jobs:
           mkdir -p /tmp/pkgcheck
           unzip -l release-assets/Vertical-Shorts-Plugin.zip
           unzip -q release-assets/Vertical-Shorts-Plugin.zip -d /tmp/pkgcheck
-          if find /tmp/pkgcheck -type f \( -iname '*.exe' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.vbs' -o -iname '*.js' \) | grep -q .; then
-            echo "ERROR: unexpected script/executable in zip" >&2
+          if find /tmp/pkgcheck -type f \( -iname '*.exe' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.vbs' -o -iname '*.js' -o -iname 'test_*' \) | grep -q .; then
+            echo "ERROR: unexpected script/executable/test binary in zip" >&2
             find /tmp/pkgcheck -type f
             exit 1
           fi
+          # Allowlist: everything must live under obs-shorts-vertical/ (plus optional root INSTALL.txt)
+          while IFS= read -r -d '' f; do
+            rel="${f#/tmp/pkgcheck/}"
+            case "$rel" in
+              obs-shorts-vertical/*|INSTALL.txt) ;;
+              *)
+                echo "ERROR: unexpected path in zip: $rel" >&2
+                exit 1
+                ;;
+            esac
+          done < <(find /tmp/pkgcheck -type f -print0)
           test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
 
           # Setup.exe must be a PE binary, not an Inno Setup stub, and a reasonable size
@@ -108,7 +136,11 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
           sudo systemctl stop clamav-freshclam 2>/dev/null || true
-          sudo freshclam || sudo freshclam --stdout || true
+          # Fail the release if signature databases cannot be refreshed.
+          if ! sudo freshclam --stdout; then
+            echo "ERROR: freshclam failed — refusing to publish without current signatures" >&2
+            exit 1
+          fi
           echo "Scanning release assets with ClamAV (zip + Setup.exe)..."
           set +e
           clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
@@ -117,13 +149,25 @@ jobs:
           # clamscan: 0 = clean, 1 = infected, 2+ = error
           if [[ "$status" -eq 1 ]]; then
             echo "ERROR: ClamAV found malware — aborting release" >&2
+            echo "--- clamav-report.txt ---"
+            cat clamav-report.txt
             exit 1
           elif [[ "$status" -ge 2 ]]; then
             echo "ERROR: ClamAV scan failed (exit $status)" >&2
+            cat clamav-report.txt || true
             exit 1
           fi
           echo "CLAMAV_CLEAN=true" >> "$GITHUB_ENV"
           echo "ClamAV: CLEAN"
+          cp clamav-report.txt release-assets/clamav-report.txt
+
+          # Machine-readable checksums (after scan artifacts are finalized)
+          (
+            cd release-assets
+            rm -f SHA256SUMS
+            sha256sum -- * > SHA256SUMS
+          )
+          cat release-assets/SHA256SUMS
 
       - name: Write release notes
         if: steps.check.outputs.valid == 'true'
@@ -165,9 +209,18 @@ jobs:
             echo "Do **not** disable Windows Defender. You can [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission) if needed."
             echo
             echo "### Checksums (SHA-256)"
-            for f in release-assets/*; do
-              echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
-            done
+            echo
+            echo "Also published as the \`SHA256SUMS\` release asset."
+            echo
+            while IFS= read -r line; do
+              hash=$(echo "$line" | awk '{print $1}')
+              name=$(echo "$line" | awk '{print $2}')
+              echo "- \`$name\`: \`$hash\`"
+            done < release-assets/SHA256SUMS
+            echo
+            echo "### Signing"
+            echo "Authenticode code signing is **not yet configured** for this open-source project."
+            echo "Until signing is available, verify SHA-256 checksums against this release note / \`SHA256SUMS\`."
           } > RELEASE_BODY.md
           cat RELEASE_BODY.md
 
