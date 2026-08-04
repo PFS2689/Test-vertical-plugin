@@ -14,7 +14,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-shorts-vertical", "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-	return "Vertical Shorts Plugin — vertical canvas, streaming, recording, short/long clips, and automation";
+	return "Professional Vertical Streaming Plugin for OBS Studio";
 }
 
 MODULE_EXPORT const char *obs_module_name(void)

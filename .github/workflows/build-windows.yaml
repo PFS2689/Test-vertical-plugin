@@ -49,6 +49,35 @@ jobs:
           config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
           package: 'true'
 
+      - name: Windows Defender scan (Release tags)
+        if: github.ref_type == 'tag'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.setup.outputs.pluginVersion }}'
+          $setup = Join-Path $env:GITHUB_WORKSPACE "release\Vertical-Shorts-Plugin-$ver-Setup.exe"
+          $zip = Join-Path $env:GITHUB_WORKSPACE "release\Vertical-Shorts-Plugin-$ver.zip"
+          $dll = Join-Path $env:GITHUB_WORKSPACE "release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
+          foreach ($p in @($setup, $zip, $dll)) {
+            if (-not (Test-Path $p)) { throw "Missing artifact for Defender scan: $p" }
+          }
+          $mp = @(
+            "${env:ProgramFiles}\Windows Defender\MpCmdRun.exe"
+            "${env:ProgramFiles}\Microsoft Defender Antivirus\MpCmdRun.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $mp) { throw 'MpCmdRun.exe not found — cannot run Windows Defender scan' }
+
+          # Update signatures when possible; do not disable Defender or add exclusions.
+          try { Start-Process -FilePath $mp -ArgumentList @('-SignatureUpdate') -Wait -NoNewWindow } catch { Write-Host 'Signature update skipped/failed; continuing with current defs' }
+
+          foreach ($p in @($setup, $zip, $dll)) {
+            Write-Host "Defender scan: $p"
+            $proc = Start-Process -FilePath $mp -ArgumentList @('-Scan','-ScanType','3','-File', $p) -Wait -PassThru -NoNewWindow
+            # MpCmdRun: 0 = no threats, 2 = threats found
+            if ($proc.ExitCode -eq 2) { throw "Windows Defender reported a threat in $p" }
+            if ($proc.ExitCode -ne 0) { throw "Windows Defender scan failed for $p (exit $($proc.ExitCode))" }
+            Write-Host "Defender CLEAN: $p"
+          }
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:

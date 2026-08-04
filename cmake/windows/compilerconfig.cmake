@@ -54,7 +54,9 @@ add_link_options(
   $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>
   $<$<NOT:$<CONFIG:Debug>>:/LTCG>
   $<$<NOT:$<CONFIG:Debug>>:/INCREMENTAL:NO>
-  /DEBUG
+  # Production Release: no debug directory / PDB. Keep /DEBUG for local RelWithDebInfo.
+  $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/DEBUG>
+  $<$<CONFIG:Release>:/DEBUG:NONE>
   /Brepro
 )
 

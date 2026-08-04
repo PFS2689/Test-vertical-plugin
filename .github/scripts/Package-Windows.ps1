@@ -121,7 +121,7 @@ setlocal
 call "$vcvars" || exit /b 1
 cd /d "$workDir" || exit /b 1
 rc.exe /nologo /i"$includeDir" /i"$workDir" /fo"$resPath" "$rcPath" || exit /b 1
-cl.exe /nologo /O2 /W3 /DUNICODE /D_UNICODE /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /PDBALTPATH:%%_PDB%% /INCREMENTAL:NO "$resPath" user32.lib shell32.lib
+cl.exe /nologo /O2 /DNDEBUG /W3 /DUNICODE /D_UNICODE /MD /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /INCREMENTAL:NO /DEBUG:NONE /OPT:REF /OPT:ICF "$resPath" user32.lib shell32.lib
 exit /b %ERRORLEVEL%
 "@
     $batPath = Join-Path $workDir 'build-setup.bat'
@@ -183,6 +183,21 @@ function Package {
 
     Get-ChildItem -Path $ReleaseDir -Recurse -Filter *.pdb -ErrorAction SilentlyContinue |
         Remove-Item -Force -ErrorAction SilentlyContinue
+
+    # Platform icons are embedded in the DLL via Qt resources (vsp-resources.qrc).
+    # Do not ship a duplicate on-disk icon tree in end-user packages.
+    $iconsDir = Join-Path $ReleaseDir 'obs-shorts-vertical\data\icons'
+    if (Test-Path $iconsDir) {
+        Remove-Item -Recurse -Force $iconsDir
+    }
+
+    # Keep only locale data next to the DLL (OBS module locale).
+    $dataDir = Join-Path $ReleaseDir 'obs-shorts-vertical\data'
+    if (Test-Path $dataDir) {
+        Get-ChildItem -Path $dataDir -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne 'locale' } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     $RemoveArgs = @{
         ErrorAction = 'SilentlyContinue'

@@ -203,7 +203,7 @@ jobs:
           {
             echo "## Vertical Shorts Plugin ${VERSION} (Windows)"
             echo
-            echo "Open-source OBS plugin. Both downloads are built in GitHub Actions and **ClamAV-scanned before publish**."
+            echo "Open-source OBS plugin. Both downloads are built in GitHub Actions (**Windows Defender** + **ClamAV** scanned before publish)."
             echo
             echo "### Download"
             echo

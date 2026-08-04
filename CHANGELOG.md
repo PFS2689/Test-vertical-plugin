@@ -12,16 +12,18 @@ Earlier intermediate development labels (1.1.x–1.4.x) used during feature work
 
 Current official release of Vertical Shorts Plugin for OBS Studio (Windows).
 
+**Product description:** Professional Vertical Streaming Plugin for OBS Studio
+
 Includes:
 
 - Vertical-only production dock (scenes, sources, mixer, transitions)
 - Independent Vertical Streaming Destination (YouTube / Twitch / TikTok / Instagram / Custom RTMP)
-- Custom platform selector with bundled SVG logos
+- Custom platform selector with bundled SVG logos (embedded in the DLL)
 - Secure credential storage (Windows Credential Manager + DPAPI fallback)
 - Vertical recording, short/long clips, clip buffer readiness
 - Optional recording automation and hotkeys
 - Custom per-user Setup.exe (no Inno Setup / NSIS)
-- ClamAV release gate, SHA-256 checksums, security hardening
+- MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
 
 ---
 

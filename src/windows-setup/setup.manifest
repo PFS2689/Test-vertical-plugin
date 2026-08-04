@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity version="1.0.5.0" processorArchitecture="amd64" name="VerticalShortsPlugin.Setup" type="win32"/>
-  <description>Vertical Shorts Plugin Setup</description>
+  <description>Professional Vertical Streaming Plugin for OBS Studio</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
