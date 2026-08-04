@@ -91,6 +91,8 @@ if(BUILD_TESTING OR VSP_BUILD_TESTS)
   target_compile_definitions(test_mixer_model PRIVATE VSP_SETTINGS_TEST=1)
   add_test(NAME mixer_model COMMAND test_mixer_model)
 
+  add_custom_target(vsp_tests DEPENDS test_settings test_stream_destination test_mixer_model)
+
   # Keep test binaries out of plugin install/package trees.
   set_target_properties(test_settings test_stream_destination test_mixer_model PROPERTIES EXCLUDE_FROM_ALL FALSE)
 endif()

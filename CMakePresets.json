@@ -142,7 +142,7 @@
       "configurePreset": "windows-tests",
       "displayName": "Windows x64 Tests",
       "configuration": "RelWithDebInfo",
-      "targets": ["test_settings", "test_stream_destination", "test_mixer_model"]
+      "targets": ["vsp_tests"]
     },
     {
       "name": "windows-ci-x64",
