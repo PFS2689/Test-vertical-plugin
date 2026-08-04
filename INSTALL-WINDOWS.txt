@@ -10,7 +10,7 @@ Manual zip install (recommended)
 --------------------------------
 Download:
 
-  https://github.com/PFS2689/vertical-shorts-plugin/releases/latest/download/Vertical-Shorts-Plugin.zip
+  https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip
 
 1. Close OBS Studio completely.
 2. Press Win+R, paste this, and press Enter:
@@ -30,7 +30,7 @@ Download:
 
 One-click install (optional)
 ----------------------------
-  https://github.com/PFS2689/vertical-shorts-plugin/releases/latest/download/VerticalShortsPlugin-Setup.exe
+  https://github.com/PFS2689/verticalshorts/releases/latest/download/VerticalShortsPlugin-Setup.exe
 
 Uninstall
 ---------

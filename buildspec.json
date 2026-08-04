@@ -35,7 +35,7 @@
     "displayName": "Vertical Shorts Plugin",
     "version": "1.0.2",
     "author": "Vertical Shorts Plugin Contributors",
-    "website": "https://github.com/PFS2689/vertical-shorts-plugin",
+    "website": "https://github.com/PFS2689/verticalshorts",
     "email": "noreply@example.com",
     "platformConfig": {
         "macos": {
