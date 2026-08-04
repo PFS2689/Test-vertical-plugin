@@ -62,3 +62,13 @@ target_sources(
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
+
+option(VSP_BUILD_TESTS "Build Vertical Shorts settings unit tests" OFF)
+if(VSP_BUILD_TESTS)
+  enable_testing()
+  add_executable(test_settings tests/test_settings.cpp)
+  target_include_directories(test_settings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(test_settings PRIVATE Qt6::Core)
+  target_compile_definitions(test_settings PRIVATE VSP_SETTINGS_TEST=1)
+  add_test(NAME settings_validation COMMAND test_settings)
+endif()

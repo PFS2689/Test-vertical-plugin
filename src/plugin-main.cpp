@@ -13,7 +13,7 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-shorts-vertical", "en-US")
 
 MODULE_EXPORT const char *obs_module_description(void)
 {
-	return "Vertical canvas for YouTube Shorts, TikTok, and Reels with move/resize camera controls";
+	return "Vertical Shorts production dock with vertical/horizontal workspaces, streaming, recording, and clips";
 }
 
 MODULE_EXPORT const char *obs_module_name(void)

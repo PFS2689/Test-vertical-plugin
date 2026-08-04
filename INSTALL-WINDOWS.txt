@@ -1,4 +1,4 @@
-Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.7)
+Vertical Shorts Plugin for OBS Studio — Windows Install (v1.1.0)
 ===============================================================
 
 Downloads (ClamAV-scanned before each GitHub release is published):

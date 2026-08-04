@@ -1,11 +1,15 @@
 #pragma once
 
+#include <QString>
+#include <cstdint>
+
+#ifdef VSP_SETTINGS_TEST
+/* Test build: avoid linking OBS */
+#else
 #include <obs-frontend-api.h>
 #include <obs.hpp>
 #include <util/config-file.h>
-
-#include <QString>
-#include <cstdint>
+#endif
 
 namespace vsp {
 
@@ -95,6 +99,9 @@ inline bool IsPortrait(uint32_t w, uint32_t h)
 
 inline QString DefaultRecordingPath()
 {
+#ifdef VSP_SETTINGS_TEST
+	return {};
+#else
 	char *path = obs_frontend_get_current_record_output_path();
 	QString result;
 	if (path) {
@@ -115,8 +122,19 @@ inline QString DefaultRecordingPath()
 		}
 	}
 	return result;
+#endif
 }
 
+#ifdef VSP_SETTINGS_TEST
+inline void SaveSettingsToData(void *, const PluginSettings &, uint32_t, uint32_t) {}
+inline PluginSettings LoadSettingsFromData(void *, uint32_t &canvasW, uint32_t &canvasH)
+{
+	PluginSettings s;
+	canvasW = 1080;
+	canvasH = 1920;
+	return s;
+}
+#else
 inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32_t canvasW, uint32_t canvasH)
 {
 	obs_data_set_int(data, "workspace_layout", static_cast<int>(s.layout));
@@ -169,5 +187,6 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 
 	return s;
 }
+#endif
 
 } // namespace vsp

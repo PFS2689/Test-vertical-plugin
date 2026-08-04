@@ -6,15 +6,19 @@
 #include <util/platform.h>
 
 #include <QAbstractItemView>
+#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QInputDialog>
+#include <QLabel>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QMouseEvent>
 #include <QScrollArea>
 #include <QSizePolicy>
+#include <QSlider>
 #include <QSplitter>
 #include <QTimer>
 #include <QToolButton>
@@ -406,7 +410,7 @@ void ShortsDock::BuildUI()
 	leftLayout->setContentsMargins(0, 0, 0, 0);
 	leftLayout->setSpacing(4);
 
-	leftLayout->addWidget(new QLabel(Translate("ShortsScenes"), left));
+	leftLayout->addWidget(new QLabel(Translate("Scenes"), left));
 	scenesList = new QListWidget(left);
 	scenesList->setSelectionMode(QAbstractItemView::SingleSelection);
 	connect(scenesList, &QListWidget::itemSelectionChanged, this, &ShortsDock::OnSceneSelectionChanged);
@@ -428,7 +432,7 @@ void ShortsDock::BuildUI()
 	sceneBtns->addStretch(1);
 	leftLayout->addLayout(sceneBtns);
 
-	leftLayout->addWidget(new QLabel(Translate("ShortsSources"), left));
+	leftLayout->addWidget(new QLabel(Translate("Sources"), left));
 	sourcesList = new QListWidget(left);
 	sourcesList->setSelectionMode(QAbstractItemView::SingleSelection);
 	connect(sourcesList, &QListWidget::itemSelectionChanged, this, &ShortsDock::OnSourceSelectionChanged);
