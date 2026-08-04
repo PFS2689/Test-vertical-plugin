@@ -72,11 +72,50 @@ jobs:
             ls -la release-assets
             exit 1
           fi
+          # Package must only contain expected OBS plugin files
+          mkdir -p /tmp/pkgcheck
+          unzip -l release-assets/Vertical-Shorts-Plugin.zip
+          unzip -q release-assets/Vertical-Shorts-Plugin.zip -d /tmp/pkgcheck
+          if find /tmp/pkgcheck -type f \( -iname '*.exe' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.vbs' -o -iname '*.js' \) | grep -q .; then
+            echo "ERROR: unexpected script/executable in zip" >&2
+            find /tmp/pkgcheck -type f
+            exit 1
+          fi
+          test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
           ls -la release-assets
+
+      - name: ClamAV malware scan
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo freshclam || sudo freshclam --stdout || true
+          echo "Scanning release assets with ClamAV..."
+          set +e
+          clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          # clamscan: 0 = clean, 1 = infected, 2+ = error
+          if [[ "$status" -eq 1 ]]; then
+            echo "ERROR: ClamAV found malware — aborting release" >&2
+            exit 1
+          elif [[ "$status" -ge 2 ]]; then
+            echo "ERROR: ClamAV scan failed (exit $status)" >&2
+            exit 1
+          fi
+          echo "CLAMAV_CLEAN=true" >> "$GITHUB_ENV"
+          echo "ClamAV: CLEAN"
+
+      - name: Write release notes
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
           {
             echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
             echo
-            echo "Open-source OBS plugin — **zip only**, no installer \`.exe\` (those often trigger false Windows virus warnings when unsigned)."
+            echo "Open-source OBS plugin — **zip only**, no installer \`.exe\`."
             echo
             echo "### Download"
             echo
@@ -88,8 +127,11 @@ jobs:
             echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
             echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
-            echo "### Verify (optional)"
-            echo "Source: https://github.com/${{ github.repository }}"
+            echo "### Safety"
+            echo "- No \`.exe\` installer (unsigned installers often trigger false Windows virus warnings)"
+            echo "- Package contents: OBS plugin DLL + locale + INSTALL.txt only"
+            echo "- **ClamAV malware scan: CLEAN** (run automatically before this release was published)"
+            echo "- Source code: https://github.com/${{ github.repository }}"
             echo
             echo "### Checksums (SHA-256)"
             for f in release-assets/*; do

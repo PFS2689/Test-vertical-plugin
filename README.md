@@ -1,6 +1,6 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.0.3** — Windows (zip only)
+**Version 1.0.4** — Windows (zip only)
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
@@ -8,7 +8,7 @@ Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTu
 
 **[Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip)**
 
-This release is **zip only** — no `.exe` installer. Unsigned setup programs often trigger Windows SmartScreen / antivirus false positives; the zip avoids that.
+This release is **zip only** — no `.exe` installer. Releases are scanned with **ClamAV** in CI before publishing (malicious packages are blocked).
 
 ## Install
 
