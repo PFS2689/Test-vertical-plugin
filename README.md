@@ -1,30 +1,38 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.0.5** — Windows
+**Version 1.0.6** — Windows
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
 ## Download
 
-- **Installer:** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)
-- **Manual zip:** [Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip)
+- **Recommended (ZIP):** [Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip)
+- **Optional installer:** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)
 
-Every release is scanned with **ClamAV** in CI before publishing. Malicious packages are blocked.
+Every release is scanned with **ClamAV** in CI before publishing.
 
-If Windows SmartScreen shows **Unknown publisher**, choose **More info → Run anyway**. That warning appears because this open-source build is not Authenticode-signed — it is not a ClamAV malware hit.
+### Windows Defender / SmartScreen
 
-## Install (Setup.exe)
+This software is **not malware**. Source is public; packages contain only the OBS plugin DLL, locale text, and install notes.
 
-1. Close OBS Studio  
-2. Run `Vertical-Shorts-Plugin-Setup.exe`  
-3. Start OBS → **View → Docks → Vertical Shorts**
+Unsigned Inno Setup `.exe` installers are often misclassified by Defender ML heuristics (for example `Trojan:Win32/Wacatac.B!ml`). Prefer the **ZIP** if Defender quarantines the Setup.exe. If SmartScreen shows **Unknown publisher**, choose **More info → Run anyway**.
 
-## Install (zip)
+Durable fix for reputation warnings is an Authenticode code-signing certificate (not free). You can also [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission).
+
+Do **not** turn off Windows Defender to install this plugin.
+
+## Install (ZIP — recommended)
 
 1. Close OBS Studio  
 2. Open `%APPDATA%\obs-studio\plugins`  
 3. Copy the `obs-shorts-vertical` folder from the zip into that folder  
 4. Start OBS → **View → Docks → Vertical Shorts**
+
+## Install (Setup.exe — optional)
+
+1. Close OBS Studio  
+2. Run `Vertical-Shorts-Plugin-Setup.exe` (per-user install, no admin)  
+3. Start OBS → **View → Docks → Vertical Shorts**
 
 ## Features
 

@@ -22,6 +22,13 @@ function(set_target_properties_plugin target)
 
   set_target_properties(${target} PROPERTIES VERSION 0 SOVERSION ${PLUGIN_VERSION})
 
+  if(MSVC)
+    # GUI subsystem is correct for an OBS UI plugin DLL (default MODULE
+    # builds can be marked "console", which is noisier to AV heuristics).
+    # PDBALTPATH keeps only the PDB filename in the binary, not the CI path.
+    target_link_options(${target} PRIVATE "/SUBSYSTEM:WINDOWS" "/PDBALTPATH:%_PDB%")
+  endif()
+
   install(TARGETS ${target} RUNTIME DESTINATION "${target}/bin/64bit" LIBRARY DESTINATION "${target}/bin/64bit")
 
   # Do not install PDB symbols into end-user packages (keeps downloads smaller/cleaner)
