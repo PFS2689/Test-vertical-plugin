@@ -55,24 +55,26 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # Zip only — no .exe installers (avoids SmartScreen / AV false positives)
-          find dist -type f -name '*.exe' -delete || true
-          if ls dist/Vertical-Shorts-Plugin.zip >/dev/null 2>&1; then
+
+          # Stable names for end users
+          if [[ -f dist/Vertical-Shorts-Plugin.zip ]]; then
             cp dist/Vertical-Shorts-Plugin.zip release-assets/
           fi
+          if [[ -f dist/Vertical-Shorts-Plugin-Setup.exe ]]; then
+            cp dist/Vertical-Shorts-Plugin-Setup.exe release-assets/
+          fi
+          # Versioned zip for archival
           if ls dist/Vertical-Shorts-Plugin-*.zip >/dev/null 2>&1; then
             cp dist/Vertical-Shorts-Plugin-*.zip release-assets/ 2>/dev/null || true
           fi
           if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
             cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
           fi
-          # Refuse to publish if any exe slipped through
-          if ls release-assets/*.exe >/dev/null 2>&1; then
-            echo "ERROR: refusing to publish .exe assets" >&2
-            ls -la release-assets
-            exit 1
-          fi
-          # Package must only contain expected OBS plugin files
+
+          test -f release-assets/Vertical-Shorts-Plugin.zip
+          test -f release-assets/Vertical-Shorts-Plugin-Setup.exe
+
+          # Zip must only contain expected OBS plugin files (no nested exe/scripts)
           mkdir -p /tmp/pkgcheck
           unzip -l release-assets/Vertical-Shorts-Plugin.zip
           unzip -q release-assets/Vertical-Shorts-Plugin.zip -d /tmp/pkgcheck
@@ -82,6 +84,16 @@ jobs:
             exit 1
           fi
           test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
+
+          # Setup.exe must be a PE binary and a reasonable size
+          file release-assets/Vertical-Shorts-Plugin-Setup.exe | tee /tmp/setup-file.txt
+          grep -qiE 'PE32|executable|MS Windows' /tmp/setup-file.txt
+          size=$(stat -c%s release-assets/Vertical-Shorts-Plugin-Setup.exe)
+          if [[ "$size" -lt 200000 || "$size" -gt 20000000 ]]; then
+            echo "ERROR: Setup.exe size looks wrong: $size bytes" >&2
+            exit 1
+          fi
+
           ls -la release-assets
 
       - name: ClamAV malware scan
@@ -92,7 +104,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
           sudo systemctl stop clamav-freshclam 2>/dev/null || true
           sudo freshclam || sudo freshclam --stdout || true
-          echo "Scanning release assets with ClamAV..."
+          echo "Scanning release assets with ClamAV (zip + Setup.exe)..."
           set +e
           clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
           status=${PIPESTATUS[0]}
@@ -115,23 +127,34 @@ jobs:
           {
             echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
             echo
-            echo "Open-source OBS plugin — **zip only**, no installer \`.exe\`."
+            echo "Open-source OBS plugin. Both downloads are built in GitHub Actions and **ClamAV-scanned before publish**."
             echo
             echo "### Download"
             echo
-            echo "**[Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)**"
+            echo "- **Installer (recommended):** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)"
+            echo "- **Manual zip:** [Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)"
             echo
-            echo "### Install"
+            echo "### Install (Setup.exe)"
+            echo "1. Close OBS Studio"
+            echo "2. Run \`Vertical-Shorts-Plugin-Setup.exe\`"
+            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Install (zip)"
             echo "1. Close OBS"
             echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
             echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
             echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
             echo "### Safety"
-            echo "- No \`.exe\` installer (unsigned installers often trigger false Windows virus warnings)"
-            echo "- Package contents: OBS plugin DLL + locale + INSTALL.txt only"
-            echo "- **ClamAV malware scan: CLEAN** (run automatically before this release was published)"
+            echo "- **ClamAV malware scan: CLEAN** (zip and Setup.exe; release is blocked if anything is flagged)"
+            echo "- Installer is per-user only (no Administrator rights) and writes only to \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "- Package contents: OBS plugin DLL + locale + INSTALL.txt"
             echo "- Source code: https://github.com/${{ github.repository }}"
+            echo
+            echo "### Windows SmartScreen note"
+            echo "Because this open-source build is **not Authenticode-signed** (no paid code-signing certificate), Windows may show **\"Windows protected your PC\" / Unknown publisher**."
+            echo "That is a reputation warning for new unsigned software — **not** a ClamAV malware detection."
+            echo "Click **More info → Run anyway** if you trust this GitHub release."
             echo
             echo "### Checksums (SHA-256)"
             for f in release-assets/*; do
