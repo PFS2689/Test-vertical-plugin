@@ -71,7 +71,13 @@ int main()
 
 	expect(!s.automationEnabled, "automation disabled by default");
 	expect(s.autoStartClipBuffer, "auto start buffer default on");
-	expect(s.streamDestMode == vsp::StreamDestMode::InheritMain, "inherit main stream dest by default");
+	expect(s.destinations.isEmpty(), "destinations empty until EnsureDefault");
+	vsp::EnsureDefaultDestinations(s);
+	expect(s.destinations.size() == 5, "five independent platform destinations");
+	expect(!s.activeDestinationId.isEmpty(), "active destination set");
+	expect(vsp::ActiveDestination(s).platform == vsp::StreamPlatform::YouTube, "default active youtube");
+	/* Independent destination model — never inherits main OBS */
+	expect(s.destinations[0].streamKey.isEmpty(), "keys not prefilled from main OBS");
 
 	QString pathErr;
 	/* recording path validation helper coverage via DefaultRecordingPath emptiness in test mode */

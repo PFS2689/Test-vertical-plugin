@@ -25,6 +25,10 @@ endif()
 if(ENABLE_QT)
   find_package(Qt6 REQUIRED COMPONENTS Widgets Core Gui)
   target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Gui)
+  find_package(Qt6 COMPONENTS Svg QUIET)
+  if(TARGET Qt6::Svg)
+    target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE Qt6::Svg)
+  endif()
   target_compile_options(
     ${CMAKE_PROJECT_NAME}
     PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -52,6 +56,8 @@ target_sources(
     src/shorts-dock.hpp
     src/plugin-settings.hpp
     src/stream-destination.hpp
+    src/credential-store.cpp
+    src/credential-store.hpp
     src/settings-dialog.cpp
     src/settings-dialog.hpp
     src/vertical-outputs.cpp
@@ -63,6 +69,7 @@ target_sources(
     src/qt-display.cpp
     src/qt-display.hpp
     src/display-helpers.hpp
+    src/vsp-resources.qrc
 )
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -80,7 +87,7 @@ if(BUILD_TESTING OR VSP_BUILD_TESTS)
   add_test(NAME settings_validation COMMAND test_settings)
 
   add_executable(test_stream_destination tests/test_stream_destination.cpp)
-  target_include_directories(test_stream_destination PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_include_directories(test_stream_destination PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test_stream_destination PRIVATE Qt6::Core)
   target_compile_definitions(test_stream_destination PRIVATE VSP_SETTINGS_TEST=1)
   add_test(NAME stream_destination COMMAND test_stream_destination)
@@ -91,8 +98,13 @@ if(BUILD_TESTING OR VSP_BUILD_TESTS)
   target_compile_definitions(test_mixer_model PRIVATE VSP_SETTINGS_TEST=1)
   add_test(NAME mixer_model COMMAND test_mixer_model)
 
-  add_custom_target(vsp_tests DEPENDS test_settings test_stream_destination test_mixer_model)
+  add_executable(test_credential_store tests/test_credential_store.cpp src/credential-store.cpp)
+  target_include_directories(test_credential_store PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(test_credential_store PRIVATE Qt6::Core)
+  add_test(NAME credential_store COMMAND test_credential_store)
+
+  add_custom_target(vsp_tests DEPENDS test_settings test_stream_destination test_mixer_model test_credential_store)
 
   # Keep test binaries out of plugin install/package trees.
-  set_target_properties(test_settings test_stream_destination test_mixer_model PROPERTIES EXCLUDE_FROM_ALL FALSE)
+  set_target_properties(test_settings test_stream_destination test_mixer_model test_credential_store PROPERTIES EXCLUDE_FROM_ALL FALSE)
 endif()

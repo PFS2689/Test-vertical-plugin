@@ -1,4 +1,10 @@
 #include "settings-dialog.hpp"
+#include <algorithm>
+#include <QUrl>
+#include <QIcon>
+#include <QHideEvent>
+#include <QDesktopServices>
+#include "credential-store.hpp"
 
 #include <obs-module.h>
 
@@ -11,6 +17,7 @@
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -51,7 +58,7 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 	resize(560, 560);
 
 	auto *root = new QVBoxLayout(this);
-	auto *tabs = new QTabWidget(this);
+	tabs = new QTabWidget(this);
 
 	auto *canvas = new QWidget();
 	BuildCanvasTab(canvas);
@@ -71,7 +78,7 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 
 	auto *streaming = new QWidget();
 	BuildStreamingTab(streaming);
-	tabs->addTab(WrapScroll(streaming), QString::fromUtf8(obs_module_text("TabVerticalStreaming")));
+	streamingTabIndex = tabs->addTab(WrapScroll(streaming), QString::fromUtf8(obs_module_text("TabVerticalStreaming")));
 
 	auto *advanced = new QWidget();
 	BuildAdvancedTab(advanced);
@@ -90,6 +97,8 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 	btnRow->addWidget(buttons);
 	root->addLayout(btnRow);
 
+	vsp::EnsureDefaultDestinations(settings);
+	LoadSecretsIntoDestinations();
 	SyncFieldsFromSettings();
 }
 
@@ -357,44 +366,136 @@ void SettingsDialog::BuildAutomationTab(QWidget *tab)
 	root->addStretch(1);
 }
 
+
 void SettingsDialog::BuildStreamingTab(QWidget *tab)
 {
 	auto *lay = new QVBoxLayout(tab);
-	streamHelp = new QLabel(QString::fromUtf8(obs_module_text("StreamingHelp")), tab);
+
+	auto *title = new QLabel(QString::fromUtf8(obs_module_text("VerticalStreamingDestination")), tab);
+	QFont tf = title->font();
+	tf.setPointSize(tf.pointSize() + 2);
+	tf.setBold(true);
+	title->setFont(tf);
+	lay->addWidget(title);
+
+	streamHelp = new QLabel(QString::fromUtf8(obs_module_text("StreamingHelpIndependent")), tab);
 	streamHelp->setWordWrap(true);
 	lay->addWidget(streamHelp);
 
+	secureStoreLabel = new QLabel(tab);
+	secureStoreLabel->setWordWrap(true);
+	lay->addWidget(secureStoreLabel);
+
 	auto *form = new QFormLayout();
-	streamDestMode = new QComboBox(tab);
-	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestInheritMain")),
-				(int)vsp::StreamDestMode::InheritMain);
-	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestSeparateKey")),
-				(int)vsp::StreamDestMode::SeparateKey);
-	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestCustomServerKey")),
-				(int)vsp::StreamDestMode::CustomServerAndKey);
-	connect(streamDestMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&SettingsDialog::OnStreamDestModeChanged);
+
+	platformCombo = new QComboBox(tab);
+	platformCombo->setIconSize(QSize(20, 20));
+	auto addPlatform = [&](vsp::StreamPlatform p) {
+		QIcon icon(vsp::PlatformIconResource(p));
+		platformCombo->addItem(icon, vsp::PlatformDisplayName(p), (int)p);
+	};
+	addPlatform(vsp::StreamPlatform::YouTube);
+	addPlatform(vsp::StreamPlatform::Twitch);
+	addPlatform(vsp::StreamPlatform::TikTok);
+	addPlatform(vsp::StreamPlatform::Instagram);
+	addPlatform(vsp::StreamPlatform::CustomRtmp);
+	connect(platformCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&SettingsDialog::OnPlatformChanged);
+	form->addRow(QString::fromUtf8(obs_module_text("DestinationPlatform")), platformCombo);
+
+	destinationPicker = new QComboBox(tab);
+	connect(destinationPicker, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&SettingsDialog::OnDestinationPickerChanged);
+	form->addRow(QString::fromUtf8(obs_module_text("SavedDestinations")), destinationPicker);
+
+	auto *destBtns = new QHBoxLayout();
+	auto *addBtn = new QPushButton(QString::fromUtf8(obs_module_text("AddDestination")), tab);
+	auto *renBtn = new QPushButton(QString::fromUtf8(obs_module_text("RenameDestination")), tab);
+	auto *delBtn = new QPushButton(QString::fromUtf8(obs_module_text("DeleteDestination")), tab);
+	connect(addBtn, &QPushButton::clicked, this, &SettingsDialog::OnAddDestination);
+	connect(renBtn, &QPushButton::clicked, this, &SettingsDialog::OnRenameDestination);
+	connect(delBtn, &QPushButton::clicked, this, &SettingsDialog::OnDeleteDestination);
+	destBtns->addWidget(addBtn);
+	destBtns->addWidget(renBtn);
+	destBtns->addWidget(delBtn);
+	destBtns->addStretch(1);
+	form->addRow(QString(), destBtns);
+
+	statusCard = new QFrame(tab);
+	statusCard->setObjectName("vspStatusCard");
+	statusCard->setFrameShape(QFrame::StyledPanel);
+	statusCard->setStyleSheet(QStringLiteral(
+		"QFrame#vspStatusCard { background: palette(base); border: 1px solid palette(mid); border-radius: 6px; padding: 8px; }"));
+	auto *cardLay = new QVBoxLayout(statusCard);
+	statusCardLabel = new QLabel(statusCard);
+	statusCardLabel->setWordWrap(true);
+	cardLay->addWidget(statusCardLabel);
+	liveStatusLabel = new QLabel(statusCard);
+	cardLay->addWidget(liveStatusLabel);
+	form->addRow(QString::fromUtf8(obs_module_text("DestinationStatus")), statusCard);
+
+	destNameEdit = new QLineEdit(tab);
+	form->addRow(QString::fromUtf8(obs_module_text("DestinationName")), destNameEdit);
+
+	twitchIngestCombo = new QComboBox(tab);
+	for (const auto &ing : vsp::TwitchIngestOptions())
+		twitchIngestCombo->addItem(ing.name, ing.id);
+	form->addRow(QString::fromUtf8(obs_module_text("TwitchIngest")), twitchIngestCombo);
 
 	verticalServerEdit = new QLineEdit(tab);
-	verticalServerEdit->setPlaceholderText(QStringLiteral("rtmp://…"));
+	verticalServerEdit->setPlaceholderText(QStringLiteral("rtmps://…"));
+	connect(verticalServerEdit, &QLineEdit::textChanged, this, [this](const QString &) {
+		UpdateProtocolIndicator();
+		UpdateDestinationStatusCard();
+	});
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamServer")), verticalServerEdit);
+
+	protocolLabel = new QLabel(tab);
+	form->addRow(QString::fromUtf8(obs_module_text("ProtocolIndicator")), protocolLabel);
+
+	auto *keyRow = new QHBoxLayout();
 	verticalKeyEdit = new QLineEdit(tab);
 	verticalKeyEdit->setEchoMode(QLineEdit::Password);
 	verticalKeyEdit->setPlaceholderText(QString::fromUtf8(obs_module_text("StreamKeyPlaceholder")));
+	verticalKeyEdit->setToolTip(QString::fromUtf8(obs_module_text("StreamKeyTooltip")));
+	showKeyBtn = new QPushButton(QString::fromUtf8(obs_module_text("ShowKey")), tab);
+	showKeyBtn->setCheckable(true);
+	connect(showKeyBtn, &QPushButton::toggled, this, &SettingsDialog::OnToggleShowKey);
+	connect(verticalKeyEdit, &QLineEdit::textChanged, this, [this](const QString &) { UpdateDestinationStatusCard(); });
+	keyRow->addWidget(verticalKeyEdit, 1);
+	keyRow->addWidget(showKeyBtn);
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamKey")), keyRow);
 
-	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamDestination")), streamDestMode);
-	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamServer")), verticalServerEdit);
-	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamKey")), verticalKeyEdit);
+	usernameEdit = new QLineEdit(tab);
+	passwordEdit = new QLineEdit(tab);
+	passwordEdit->setEchoMode(QLineEdit::Password);
+	form->addRow(QString::fromUtf8(obs_module_text("OptionalUsername")), usernameEdit);
+	form->addRow(QString::fromUtf8(obs_module_text("OptionalPassword")), passwordEdit);
+
 	lay->addLayout(form);
 
-	streamDestSummary = new QLabel(tab);
-	streamDestSummary->setWordWrap(true);
-	lay->addWidget(streamDestSummary);
+	platformNote = new QLabel(tab);
+	platformNote->setWordWrap(true);
+	lay->addWidget(platformNote);
 
-	testDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("TestDestination")), tab);
+	platformHelpBtn = new QPushButton(tab);
+	connect(platformHelpBtn, &QPushButton::clicked, this, &SettingsDialog::OnOpenPlatformHelp);
+	lay->addWidget(platformHelpBtn);
+
+	auto *actionRow = new QHBoxLayout();
+	testDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("TestConfiguration")), tab);
+	saveDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("SaveDestination")), tab);
+	clearCredBtn = new QPushButton(QString::fromUtf8(obs_module_text("ClearVerticalCredentials")), tab);
 	connect(testDestBtn, &QPushButton::clicked, this, &SettingsDialog::OnTestDestination);
-	lay->addWidget(testDestBtn);
+	connect(saveDestBtn, &QPushButton::clicked, this, &SettingsDialog::OnSaveDestination);
+	connect(clearCredBtn, &QPushButton::clicked, this, &SettingsDialog::OnClearCredentials);
+	actionRow->addWidget(testDestBtn);
+	actionRow->addWidget(saveDestBtn);
+	actionRow->addWidget(clearCredBtn);
+	actionRow->addStretch(1);
+	lay->addLayout(actionRow);
 
-	auto *warn = new QLabel(QString::fromUtf8(obs_module_text("DualStreamPlatformNote")), tab);
+	auto *warn = new QLabel(QString::fromUtf8(obs_module_text("IndependentStreamNote")), tab);
 	warn->setWordWrap(true);
 	lay->addWidget(warn);
 	lay->addStretch(1);
@@ -460,19 +561,8 @@ void SettingsDialog::SyncFieldsFromSettings()
 	if (bufferStatusInSettings && outputs)
 		bufferStatusInSettings->setText(outputs->BufferStatusText());
 
-	if (streamDestMode) {
-		for (int i = 0; i < streamDestMode->count(); ++i) {
-			if (streamDestMode->itemData(i).toInt() == (int)settings.streamDestMode) {
-				streamDestMode->setCurrentIndex(i);
-				break;
-			}
-		}
-		verticalServerEdit->setText(settings.verticalStreamServer);
-		verticalKeyEdit->setText(settings.verticalStreamKey);
-		OnStreamDestModeChanged(streamDestMode->currentIndex());
-		if (outputs)
-			streamDestSummary->setText(outputs->StreamDestinationSummary());
-	}
+	if (platformCombo)
+		SyncStreamingFields();
 
 	if (outputs) {
 		encoderLabel->setText(outputs->ActiveEncoderSummary());
@@ -579,6 +669,8 @@ void SettingsDialog::OnResetDefaults()
 {
 	settings = vsp::PluginSettings{};
 	settings.recordingPath = vsp::DefaultRecordingPath();
+	vsp::EnsureDefaultDestinations(settings);
+	LoadSecretsIntoDestinations();
 	SyncFieldsFromSettings();
 }
 
@@ -608,6 +700,8 @@ void SettingsDialog::OnResetAutomation()
 	settings.scheduleEndTime.clear();
 	settings.scheduleRepeat = vsp::ScheduleRepeat::Once;
 	settings.scheduleWeekdaysMask = 0;
+	vsp::EnsureDefaultDestinations(settings);
+	LoadSecretsIntoDestinations();
 	SyncFieldsFromSettings();
 }
 
@@ -659,23 +753,11 @@ bool SettingsDialog::ValidateAndCommit(QString *error, QString *warning)
 	if (bufferOnRecordCheck)
 		settings.bufferStartOnVerticalRecord = bufferOnRecordCheck->isChecked();
 
-	if (streamDestMode) {
-		settings.streamDestMode = static_cast<vsp::StreamDestMode>(streamDestMode->currentData().toInt());
-		settings.verticalStreamServer = verticalServerEdit->text().trimmed();
-		settings.verticalStreamKey = verticalKeyEdit->text(); /* keep as entered; do not trim mid-key */
-		if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey &&
-		    settings.verticalStreamKey.trimmed().isEmpty()) {
-			if (error)
-				*error = QStringLiteral("Separate vertical stream key cannot be empty.");
-			return false;
-		}
-		if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
-			if (settings.verticalStreamServer.isEmpty() || settings.verticalStreamKey.trimmed().isEmpty()) {
-				if (error)
-					*error = QStringLiteral("Custom vertical server and stream key are required.");
-				return false;
-			}
-		}
+	/* Persist destination metadata + secrets. Full destination validity is enforced on
+	 * Go Live / Test Configuration so canvas/clip settings can still be saved. */
+	if (platformCombo) {
+		PersistActiveDestinationSecrets();
+		HighlightInvalidField(QString());
 	}
 
 	settings.automationEnabled = autoMaster->isChecked();
@@ -724,38 +806,401 @@ void SettingsDialog::OnAccepted()
 	accept();
 }
 
-void SettingsDialog::OnStreamDestModeChanged(int)
+
+void SettingsDialog::hideEvent(QHideEvent *event)
 {
-	if (!streamDestMode)
+	if (showKeyBtn)
+		showKeyBtn->setChecked(false);
+	if (verticalKeyEdit)
+		verticalKeyEdit->setEchoMode(QLineEdit::Password);
+	QDialog::hideEvent(event);
+}
+
+void SettingsDialog::LoadSecretsIntoDestinations()
+{
+	for (vsp::StreamDestination &d : settings.destinations) {
+		QString key, pass;
+		vsp::LoadSecret(vsp::KeyTarget(d.id), &key);
+		vsp::LoadSecret(vsp::PasswordTarget(d.id), &pass);
+		d.streamKey = key;
+		d.password = pass;
+	}
+}
+
+void SettingsDialog::PersistActiveDestinationSecrets(bool applyPlatformFromCombo)
+{
+	/* Always write into the currently active destination id (not a newly selected picker value). */
+	vsp::StreamDestination d;
+	d.id = settings.activeDestinationId;
+	if (const auto *ex = vsp::FindDestination(settings, d.id))
+		d = *ex;
+	if (applyPlatformFromCombo && platformCombo)
+		d.platform = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	if (destNameEdit)
+		d.name = destNameEdit->text().trimmed();
+	if (verticalServerEdit)
+		d.server = verticalServerEdit->text().trimmed();
+	if (verticalKeyEdit)
+		d.streamKey = verticalKeyEdit->text();
+	if (usernameEdit)
+		d.username = usernameEdit->text().trimmed();
+	if (passwordEdit)
+		d.password = passwordEdit->text();
+	if (twitchIngestCombo) {
+		d.twitchIngestId = twitchIngestCombo->currentData().toString();
+		d.useRecommendedTwitchIngest = (d.twitchIngestId == QStringLiteral("auto"));
+		if (d.platform == vsp::StreamPlatform::Twitch) {
+			for (const auto &ing : vsp::TwitchIngestOptions()) {
+				if (ing.id == d.twitchIngestId) {
+					d.server = ing.url;
+					break;
+				}
+			}
+		}
+	}
+
+	auto *existing = vsp::FindDestination(settings, d.id);
+	if (!existing)
 		return;
-	const auto mode = static_cast<vsp::StreamDestMode>(streamDestMode->currentData().toInt());
-	const bool needKey = mode == vsp::StreamDestMode::SeparateKey || mode == vsp::StreamDestMode::CustomServerAndKey;
-	const bool needServer = mode == vsp::StreamDestMode::CustomServerAndKey;
-	verticalKeyEdit->setEnabled(needKey);
-	verticalServerEdit->setEnabled(needServer);
-	if (streamDestSummary)
-		streamDestSummary->setText(QStringLiteral("Using: %1").arg(vsp::DestinationModeLabel(mode)));
+	*existing = d;
+	settings.activeDestinationId = d.id;
+	auto keyRes = vsp::SaveSecret(vsp::KeyTarget(d.id), d.streamKey);
+	if (!d.password.isEmpty())
+		vsp::SaveSecret(vsp::PasswordTarget(d.id), d.password);
+	else
+		vsp::DeleteSecret(vsp::PasswordTarget(d.id));
+	if (secureStoreLabel) {
+		if (!keyRes.usedSecureStorage) {
+			secureStoreLabel->setText(QString::fromUtf8(obs_module_text("InsecureCredentialWarning")));
+		} else {
+			secureStoreLabel->setText(QString::fromUtf8(obs_module_text("SecureCredentialInfo"))
+							  .arg(vsp::SecureStorageDescription()));
+		}
+	}
+}
+
+vsp::StreamDestination SettingsDialog::CurrentUiDestination(bool applyPlatformFromCombo) const
+{
+	vsp::StreamDestination d;
+	d.id = settings.activeDestinationId;
+	if (const auto *ex = vsp::FindDestination(settings, d.id))
+		d = *ex;
+	if (applyPlatformFromCombo && platformCombo)
+		d.platform = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	if (destNameEdit)
+		d.name = destNameEdit->text().trimmed();
+	if (verticalServerEdit)
+		d.server = verticalServerEdit->text().trimmed();
+	if (verticalKeyEdit)
+		d.streamKey = verticalKeyEdit->text();
+	if (usernameEdit)
+		d.username = usernameEdit->text().trimmed();
+	if (passwordEdit)
+		d.password = passwordEdit->text();
+	if (twitchIngestCombo) {
+		d.twitchIngestId = twitchIngestCombo->currentData().toString();
+		d.useRecommendedTwitchIngest = (d.twitchIngestId == QStringLiteral("auto"));
+		if (d.platform == vsp::StreamPlatform::Twitch) {
+			for (const auto &ing : vsp::TwitchIngestOptions()) {
+				if (ing.id == d.twitchIngestId) {
+					d.server = ing.url;
+					break;
+				}
+			}
+		}
+	}
+	return d;
+}
+
+void SettingsDialog::SyncStreamingFields()
+{
+	suppressPlatformPrompt = true;
+	vsp::EnsureDefaultDestinations(settings);
+	LoadSecretsIntoDestinations();
+
+	destinationPicker->blockSignals(true);
+	destinationPicker->clear();
+	for (const auto &d : settings.destinations) {
+		destinationPicker->addItem(
+			QStringLiteral("%1 — %2").arg(vsp::PlatformDisplayName(d.platform), d.name), d.id);
+	}
+	int destIdx = 0;
+	for (int i = 0; i < destinationPicker->count(); ++i) {
+		if (destinationPicker->itemData(i).toString() == settings.activeDestinationId) {
+			destIdx = i;
+			break;
+		}
+	}
+	destinationPicker->setCurrentIndex(destIdx);
+	destinationPicker->blockSignals(false);
+
+	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
+	for (int i = 0; i < platformCombo->count(); ++i) {
+		if (platformCombo->itemData(i).toInt() == (int)d.platform) {
+			platformCombo->setCurrentIndex(i);
+			break;
+		}
+	}
+	destNameEdit->setText(d.name);
+	verticalServerEdit->setText(d.server);
+	verticalKeyEdit->setText(d.streamKey);
+	usernameEdit->setText(d.username);
+	passwordEdit->setText(d.password);
+	for (int i = 0; i < twitchIngestCombo->count(); ++i) {
+		if (twitchIngestCombo->itemData(i).toString() == d.twitchIngestId) {
+			twitchIngestCombo->setCurrentIndex(i);
+			break;
+		}
+	}
+	ApplyPlatformFieldVisibility();
+	UpdateProtocolIndicator();
+	UpdateDestinationStatusCard();
+	if (outputs && liveStatusLabel)
+		liveStatusLabel->setText(QStringLiteral("Vertical stream: %1").arg(outputs->LiveStatusText()));
+	if (secureStoreLabel) {
+		if (vsp::SecureStorageAvailable()) {
+			secureStoreLabel->setText(QString::fromUtf8(obs_module_text("SecureCredentialInfo"))
+							  .arg(vsp::SecureStorageDescription()));
+		} else {
+			secureStoreLabel->setText(QString::fromUtf8(obs_module_text("InsecureCredentialWarning")));
+		}
+	}
+	suppressPlatformPrompt = false;
+}
+
+void SettingsDialog::UpdateDestinationStatusCard()
+{
+	if (!statusCardLabel)
+		return;
+	const vsp::StreamDestination d = CurrentUiDestination();
+	QString err;
+	const bool valid = vsp::ValidateDestination(d, &err);
+	QString text = QStringLiteral("Platform: %1\nDestination: %2\nServer host: %3\nStream key configured: %4\n"
+				      "Configuration valid: %5\nConnection status: not tested\nVertical stream: %6")
+			       .arg(vsp::PlatformDisplayName(d.platform),
+				    d.name.isEmpty() ? QStringLiteral("(unnamed)") : d.name, vsp::HostnameOnly(d.server),
+				    d.streamKey.isEmpty() ? QStringLiteral("No") : QStringLiteral("Yes"),
+				    valid ? QStringLiteral("Yes") : QStringLiteral("No"),
+				    outputs ? outputs->LiveStatusText() : QStringLiteral("Offline"));
+	if (!valid && !err.isEmpty())
+		text += QStringLiteral("\n") + err;
+	statusCardLabel->setText(text);
+}
+
+void SettingsDialog::UpdateProtocolIndicator()
+{
+	if (!protocolLabel || !verticalServerEdit)
+		return;
+	const QString s = verticalServerEdit->text().trimmed().toLower();
+	if (s.startsWith(QStringLiteral("rtmps://")))
+		protocolLabel->setText(QStringLiteral("RTMPS (preferred)"));
+	else if (s.startsWith(QStringLiteral("rtmp://")))
+		protocolLabel->setText(QStringLiteral("RTMP"));
+	else if (s.isEmpty())
+		protocolLabel->setText(QStringLiteral("—"));
+	else
+		protocolLabel->setText(QString::fromUtf8(obs_module_text("UnsupportedProtocol")));
+}
+
+void SettingsDialog::FocusStreamingTab()
+{
+	if (tabs && streamingTabIndex >= 0)
+		tabs->setCurrentIndex(streamingTabIndex);
+}
+
+void SettingsDialog::ApplyPlatformFieldVisibility()
+{
+	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const bool twitch = p == vsp::StreamPlatform::Twitch;
+	const bool custom = p == vsp::StreamPlatform::CustomRtmp;
+	twitchIngestCombo->setVisible(twitch);
+	usernameEdit->setVisible(custom);
+	passwordEdit->setVisible(custom);
+
+	QString note;
+	QString helpLabel;
+	switch (p) {
+	case vsp::StreamPlatform::YouTube:
+		note = QString::fromUtf8(obs_module_text("YouTubeNote"));
+		helpLabel = QString::fromUtf8(obs_module_text("OpenYouTubeInstructions"));
+		if (verticalServerEdit->text().trimmed().isEmpty())
+			verticalServerEdit->setText(vsp::SuggestedYouTubeServer());
+		break;
+	case vsp::StreamPlatform::Twitch:
+		note = QString::fromUtf8(obs_module_text("TwitchNote"));
+		helpLabel = QString::fromUtf8(obs_module_text("OpenTwitchInstructions"));
+		break;
+	case vsp::StreamPlatform::TikTok:
+		note = QString::fromUtf8(obs_module_text("TikTokNote"));
+		helpLabel = QString::fromUtf8(obs_module_text("OpenTikTokInstructions"));
+		break;
+	case vsp::StreamPlatform::Instagram:
+		note = QString::fromUtf8(obs_module_text("InstagramNote"));
+		helpLabel = QString::fromUtf8(obs_module_text("OpenInstagramInstructions"));
+		break;
+	case vsp::StreamPlatform::CustomRtmp:
+		note = QString::fromUtf8(obs_module_text("CustomRtmpNote"));
+		helpLabel = QString::fromUtf8(obs_module_text("CustomRtmpHelp"));
+		break;
+	}
+	platformNote->setText(note);
+	platformHelpBtn->setText(helpLabel);
+	platformHelpBtn->setVisible(!vsp::PlatformHelpUrl(p).isEmpty() || p == vsp::StreamPlatform::CustomRtmp);
+	UpdateDestinationStatusCard();
+}
+
+void SettingsDialog::OnPlatformChanged(int)
+{
+	if (suppressPlatformPrompt)
+		return;
+	/* Persist the currently edited destination before switching platforms.
+	 * Do not apply the new combo platform onto the previous destination. */
+	PersistActiveDestinationSecrets(false);
+	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	/* Prefer an existing destination for this platform */
+	for (int i = 0; i < settings.destinations.size(); ++i) {
+		if (settings.destinations[i].platform == p) {
+			settings.activeDestinationId = settings.destinations[i].id;
+			SyncStreamingFields();
+			return;
+		}
+	}
+	vsp::StreamDestination d = vsp::MakeDefaultDestination(p);
+	settings.destinations.push_back(d);
+	settings.activeDestinationId = d.id;
+	SyncStreamingFields();
+}
+
+void SettingsDialog::OnDestinationPickerChanged(int)
+{
+	if (suppressPlatformPrompt || !destinationPicker)
+		return;
+	PersistActiveDestinationSecrets(false);
+	settings.activeDestinationId = destinationPicker->currentData().toString();
+	SyncStreamingFields();
+}
+
+void SettingsDialog::OnToggleShowKey(bool checked)
+{
+	verticalKeyEdit->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
+	showKeyBtn->setText(QString::fromUtf8(obs_module_text(checked ? "HideKey" : "ShowKey")));
+}
+
+void SettingsDialog::OnOpenPlatformHelp()
+{
+	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	const QString url = vsp::PlatformHelpUrl(p);
+	if (!url.isEmpty())
+		QDesktopServices::openUrl(QUrl(url));
+}
+
+void SettingsDialog::OnSaveDestination()
+{
+	PersistActiveDestinationSecrets();
+	UpdateDestinationStatusCard();
+	QMessageBox::information(this, QString::fromUtf8(obs_module_text("SaveDestination")),
+				 QString::fromUtf8(obs_module_text("DestinationSaved")));
+	SyncStreamingFields();
+}
+
+void SettingsDialog::OnClearCredentials()
+{
+	const auto reply = QMessageBox::question(this, QString::fromUtf8(obs_module_text("ClearVerticalCredentials")),
+						 QString::fromUtf8(obs_module_text("ClearCredentialsConfirm")),
+						 QMessageBox::Yes | QMessageBox::No);
+	if (reply != QMessageBox::Yes)
+		return;
+	vsp::StreamDestination d = CurrentUiDestination();
+	vsp::DeleteSecret(vsp::KeyTarget(d.id));
+	vsp::DeleteSecret(vsp::PasswordTarget(d.id));
+	if (auto *ex = vsp::FindDestination(settings, d.id)) {
+		ex->streamKey.clear();
+		ex->password.clear();
+	}
+	verticalKeyEdit->clear();
+	passwordEdit->clear();
+	UpdateDestinationStatusCard();
+}
+
+void SettingsDialog::OnAddDestination()
+{
+	const auto p = static_cast<vsp::StreamPlatform>(platformCombo->currentData().toInt());
+	vsp::StreamDestination d = vsp::MakeDefaultDestination(p);
+	d.name = QStringLiteral("%1 %2").arg(vsp::PlatformDisplayName(p)).arg(settings.destinations.size() + 1);
+	settings.destinations.push_back(d);
+	settings.activeDestinationId = d.id;
+	SyncStreamingFields();
+}
+
+void SettingsDialog::OnRenameDestination()
+{
+	bool ok = false;
+	const QString name = QInputDialog::getText(this, QString::fromUtf8(obs_module_text("RenameDestination")),
+						   QString::fromUtf8(obs_module_text("DestinationName")),
+						   QLineEdit::Normal, destNameEdit->text(), &ok);
+	if (!ok || name.trimmed().isEmpty())
+		return;
+	destNameEdit->setText(name.trimmed());
+	PersistActiveDestinationSecrets();
+	SyncStreamingFields();
+}
+
+void SettingsDialog::OnDeleteDestination()
+{
+	if (settings.destinations.size() <= 1) {
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("DeleteDestination")),
+				     QString::fromUtf8(obs_module_text("CannotDeleteLastDestination")));
+		return;
+	}
+	const auto reply = QMessageBox::question(this, QString::fromUtf8(obs_module_text("DeleteDestination")),
+						 QString::fromUtf8(obs_module_text("DeleteDestinationConfirm")),
+						 QMessageBox::Yes | QMessageBox::No);
+	if (reply != QMessageBox::Yes)
+		return;
+	const QString id = settings.activeDestinationId;
+	vsp::DeleteSecret(vsp::KeyTarget(id));
+	vsp::DeleteSecret(vsp::PasswordTarget(id));
+	settings.destinations.erase(std::remove_if(settings.destinations.begin(), settings.destinations.end(),
+						   [&](const vsp::StreamDestination &d) { return d.id == id; }),
+				    settings.destinations.end());
+	settings.activeDestinationId = settings.destinations.first().id;
+	SyncStreamingFields();
+}
+
+void SettingsDialog::HighlightInvalidField(const QString &field)
+{
+	auto mark = [](QLineEdit *e, bool bad) {
+		if (!e)
+			return;
+		e->setStyleSheet(bad ? QStringLiteral("QLineEdit { border: 1px solid #c62828; }") : QString());
+	};
+	mark(verticalServerEdit, field == QStringLiteral("server"));
+	mark(verticalKeyEdit, field == QStringLiteral("key"));
 }
 
 void SettingsDialog::OnTestDestination()
 {
-	QString error;
-	QString warning;
-	if (!ValidateAndCommit(&error, &warning)) {
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")), error);
+	PersistActiveDestinationSecrets();
+	settings = settings; /* secrets already in settings.destinations */
+	QString err, field;
+	const auto d = CurrentUiDestination();
+	if (!vsp::ValidateDestination(d, &err, &field)) {
+		HighlightInvalidField(field);
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestConfiguration")), err);
 		return;
 	}
+	HighlightInvalidField(QString());
 	if (!outputs) {
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")),
-				     QStringLiteral("Vertical outputs are not ready."));
+		QMessageBox::information(this, QString::fromUtf8(obs_module_text("TestConfiguration")),
+					 QStringLiteral("Local configuration valid.\nFull output test requires the dock."));
 		return;
 	}
 	outputs->ApplySettings(settings);
 	QString summary;
-	QString err;
 	if (!outputs->TestStreamDestination(&summary, &err)) {
-		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")), err);
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestConfiguration")), err);
 		return;
 	}
-	QMessageBox::information(this, QString::fromUtf8(obs_module_text("TestDestination")), summary);
+	QMessageBox::information(this, QString::fromUtf8(obs_module_text("TestConfiguration")), summary);
 }
+

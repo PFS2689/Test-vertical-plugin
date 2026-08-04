@@ -1,0 +1,15 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/vsp">
+    <file alias="icons/youtube.png">../data/icons/youtube.png</file>
+    <file alias="icons/twitch.png">../data/icons/twitch.png</file>
+    <file alias="icons/tiktok.png">../data/icons/tiktok.png</file>
+    <file alias="icons/instagram.png">../data/icons/instagram.png</file>
+    <file alias="icons/custom-rtmp.png">../data/icons/custom-rtmp.png</file>
+    <file alias="icons/youtube.svg">../data/icons/youtube.svg</file>
+    <file alias="icons/twitch.svg">../data/icons/twitch.svg</file>
+    <file alias="icons/tiktok.svg">../data/icons/tiktok.svg</file>
+    <file alias="icons/instagram.svg">../data/icons/instagram.svg</file>
+    <file alias="icons/custom-rtmp.svg">../data/icons/custom-rtmp.svg</file>
+  </qresource>
+</RCC>

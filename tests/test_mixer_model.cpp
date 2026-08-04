@@ -22,7 +22,9 @@ int main()
 	expect(s.autoStartClipBuffer, "auto-start buffer enabled by default");
 	expect(!s.stopBufferWhenIdle, "idle stop disabled by default");
 	expect(s.saveAvailableWhenShort, "partial save offered by default");
-	expect(s.streamDestMode == vsp::StreamDestMode::InheritMain, "stream inherits main by default");
+	expect(s.destinations.isEmpty(), "no destinations until ensure");
+	vsp::EnsureDefaultDestinations(s);
+	expect(s.destinations.size() == 5, "independent destinations per platform");
 	expect(!s.automationEnabled, "automation off by default");
 
 	s.shortClipPreset = vsp::ShortClipPreset::Sec30;

@@ -2,6 +2,8 @@
 
 #include <QString>
 #include <QStringList>
+#include <QList>
+#include <QUuid>
 #include <cstdint>
 
 #include "stream-destination.hpp"
@@ -91,10 +93,9 @@ struct PluginSettings {
 	bool bufferStartOnVerticalLive = true;
 	bool bufferStartOnVerticalRecord = true;
 
-	/* Vertical Streaming destination */
-	StreamDestMode streamDestMode = StreamDestMode::InheritMain;
-	QString verticalStreamServer; /* used when CustomServerAndKey */
-	QString verticalStreamKey;    /* used when SeparateKey or CustomServerAndKey */
+	/* Vertical Streaming — completely independent destination (never inherits main OBS). */
+	QString activeDestinationId;
+	QList<StreamDestination> destinations; /* secrets loaded into memory separately */
 
 	/* Vertical Recording Automation (disabled by default) */
 	bool automationEnabled = false;
@@ -312,6 +313,46 @@ inline bool IsPortrait(uint32_t w, uint32_t h)
 	return h > w;
 }
 
+inline StreamDestination *FindDestination(PluginSettings &s, const QString &id)
+{
+	for (StreamDestination &d : s.destinations) {
+		if (d.id == id)
+			return &d;
+	}
+	return nullptr;
+}
+
+inline const StreamDestination *FindDestination(const PluginSettings &s, const QString &id)
+{
+	for (const StreamDestination &d : s.destinations) {
+		if (d.id == id)
+			return &d;
+	}
+	return nullptr;
+}
+
+inline StreamDestination ActiveDestination(const PluginSettings &s)
+{
+	if (const StreamDestination *d = FindDestination(s, s.activeDestinationId))
+		return *d;
+	if (!s.destinations.isEmpty())
+		return s.destinations.first();
+	return MakeDefaultDestination(StreamPlatform::YouTube);
+}
+
+inline void EnsureDefaultDestinations(PluginSettings &s)
+{
+	if (!s.destinations.isEmpty())
+		return;
+	/* One empty slot per platform so switching presets preserves separate configs */
+	for (int i = 0; i <= (int)StreamPlatform::CustomRtmp; ++i) {
+		StreamDestination d = MakeDefaultDestination(static_cast<StreamPlatform>(i));
+		s.destinations.push_back(d);
+	}
+	s.activeDestinationId = s.destinations.first().id;
+}
+
+
 inline QString DefaultRecordingPath()
 {
 #ifdef VSP_SETTINGS_TEST
@@ -374,9 +415,26 @@ inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32
 	obs_data_set_bool(data, "buffer_start_on_vertical_live", s.bufferStartOnVerticalLive);
 	obs_data_set_bool(data, "buffer_start_on_vertical_record", s.bufferStartOnVerticalRecord);
 
-	obs_data_set_int(data, "stream_dest_mode", static_cast<int>(s.streamDestMode));
-	obs_data_set_string(data, "vertical_stream_server", s.verticalStreamServer.toUtf8().constData());
-	obs_data_set_string(data, "vertical_stream_key", s.verticalStreamKey.toUtf8().constData());
+	/* Destination metadata only — never persist stream keys / passwords here */
+	obs_data_set_string(data, "active_destination_id", s.activeDestinationId.toUtf8().constData());
+	OBSDataArrayAutoRelease destArr = obs_data_array_create();
+	for (const StreamDestination &d : s.destinations) {
+		OBSDataAutoRelease obj = obs_data_create();
+		obs_data_set_string(obj, "id", d.id.toUtf8().constData());
+		obs_data_set_int(obj, "platform", static_cast<int>(d.platform));
+		obs_data_set_string(obj, "name", d.name.toUtf8().constData());
+		obs_data_set_string(obj, "server", d.server.toUtf8().constData());
+		obs_data_set_string(obj, "username", d.username.toUtf8().constData());
+		obs_data_set_string(obj, "twitch_ingest_id", d.twitchIngestId.toUtf8().constData());
+		obs_data_set_bool(obj, "twitch_recommended", d.useRecommendedTwitchIngest);
+		obs_data_set_bool(obj, "has_key", !d.streamKey.isEmpty());
+		obs_data_array_push_back(destArr, obj);
+	}
+	obs_data_set_array(data, "stream_destinations", destArr);
+
+	/* Clear legacy insecure keys if present from older versions */
+	obs_data_erase(data, "vertical_stream_key");
+	obs_data_erase(data, "stream_dest_mode");
 
 	obs_data_set_bool(data, "automation_enabled", s.automationEnabled);
 	obs_data_set_bool(data, "auto_start_main_stream", s.autoStartOnMainStream);
@@ -450,9 +508,50 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 						? obs_data_get_bool(data, "buffer_start_on_vertical_record")
 						: true;
 
-	s.streamDestMode = static_cast<StreamDestMode>(obs_data_get_int(data, "stream_dest_mode"));
-	s.verticalStreamServer = QString::fromUtf8(obs_data_get_string(data, "vertical_stream_server"));
-	s.verticalStreamKey = QString::fromUtf8(obs_data_get_string(data, "vertical_stream_key"));
+	s.activeDestinationId = QString::fromUtf8(obs_data_get_string(data, "active_destination_id"));
+	s.destinations.clear();
+	obs_data_array_t *destArr = obs_data_get_array(data, "stream_destinations");
+	if (destArr) {
+		const size_t n = obs_data_array_count(destArr);
+		for (size_t i = 0; i < n; ++i) {
+			OBSDataAutoRelease obj = obs_data_array_item(destArr, i);
+			StreamDestination d;
+			d.id = QString::fromUtf8(obs_data_get_string(obj, "id"));
+			d.platform = static_cast<StreamPlatform>(obs_data_get_int(obj, "platform"));
+			d.name = QString::fromUtf8(obs_data_get_string(obj, "name"));
+			d.server = QString::fromUtf8(obs_data_get_string(obj, "server"));
+			d.username = QString::fromUtf8(obs_data_get_string(obj, "username"));
+			d.twitchIngestId = QString::fromUtf8(obs_data_get_string(obj, "twitch_ingest_id"));
+			d.useRecommendedTwitchIngest = obs_data_has_user_value(obj, "twitch_recommended")
+							       ? obs_data_get_bool(obj, "twitch_recommended")
+							       : true;
+			if (d.id.isEmpty())
+				d.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+			s.destinations.push_back(d);
+		}
+		obs_data_array_release(destArr);
+	}
+
+	/* Migrate legacy plain-text vertical key into first custom destination memory only;
+	 * do not keep it in the settings blob. Caller should move it into secure storage. */
+	if (s.destinations.isEmpty()) {
+		const char *legacyServer = obs_data_get_string(data, "vertical_stream_server");
+		const char *legacyKey = obs_data_get_string(data, "vertical_stream_key");
+		EnsureDefaultDestinations(s);
+		if (legacyServer && *legacyServer) {
+			for (StreamDestination &d : s.destinations) {
+				if (d.platform == StreamPlatform::CustomRtmp) {
+					d.server = QString::fromUtf8(legacyServer);
+					if (legacyKey && *legacyKey)
+						d.streamKey = QString::fromUtf8(legacyKey);
+					s.activeDestinationId = d.id;
+					break;
+				}
+			}
+		}
+	} else if (s.activeDestinationId.isEmpty()) {
+		s.activeDestinationId = s.destinations.first().id;
+	}
 
 	s.automationEnabled = obs_data_get_bool(data, "automation_enabled");
 	s.autoStartOnMainStream = obs_data_get_bool(data, "auto_start_main_stream");
@@ -500,9 +599,9 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 		s.countdownSeconds = 60;
 	if (s.bufferIdleTimeoutSeconds <= 0)
 		s.bufferIdleTimeoutSeconds = 300;
-	if (s.streamDestMode != StreamDestMode::InheritMain && s.streamDestMode != StreamDestMode::SeparateKey &&
-	    s.streamDestMode != StreamDestMode::CustomServerAndKey)
-		s.streamDestMode = StreamDestMode::InheritMain;
+	EnsureDefaultDestinations(s);
+	if (s.activeDestinationId.isEmpty() && !s.destinations.isEmpty())
+		s.activeDestinationId = s.destinations.first().id;
 
 	auto validShort = [](ShortClipPreset p) {
 		return p == ShortClipPreset::Custom || p == ShortClipPreset::Sec10 || p == ShortClipPreset::Sec20 ||

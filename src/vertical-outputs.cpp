@@ -219,129 +219,87 @@ QString VerticalOutputs::RecordingStatusSummary() const
 
 QString VerticalOutputs::StreamDestinationSummary() const
 {
-	return QStringLiteral("Using: %1").arg(vsp::DestinationModeLabel(settings.streamDestMode));
+	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
+	return QStringLiteral("%1 — %2 (server %3, key %4)")
+		.arg(vsp::PlatformDisplayName(d.platform), d.name.isEmpty() ? QStringLiteral("(unnamed)") : d.name,
+		     vsp::HostnameOnly(d.server),
+		     d.streamKey.isEmpty() ? QStringLiteral("not configured") : QStringLiteral("configured"));
 }
 
-bool VerticalOutputs::WouldConflictWithMainStream(QString *detail) const
+QString VerticalOutputs::LiveStatusText() const
 {
-	if (!vsp::MainStreamingActive())
-		return false;
+	return vsp::VerticalLiveStatusLabel(liveStatus);
+}
 
-	const vsp::StreamDestination main = vsp::MainStreamingDestination();
-	vsp::StreamDestination vertical = main;
+void VerticalOutputs::SetLiveStatus(vsp::VerticalLiveStatus s)
+{
+	liveStatus = s;
+	emit liveStatusChanged(s, LiveStatusText());
+}
 
-	if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey) {
-		if (settings.verticalStreamKey.trimmed().isEmpty()) {
-			if (detail)
-				*detail = QStringLiteral("Separate vertical stream key is not configured.");
-			return true; /* would reuse main key */
-		}
-		vertical.streamKey = settings.verticalStreamKey.trimmed();
-	} else if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
-		vertical.server = settings.verticalStreamServer.trimmed();
-		vertical.streamKey = settings.verticalStreamKey.trimmed();
-		vertical.serviceType = QStringLiteral("rtmp_custom");
-	}
-
-	if (vsp::DestinationsConflict(main, vertical)) {
-		if (detail) {
-			*detail = QStringLiteral(
-					  "Main OBS stream is active to the same destination "
-					  "(server %1, key %2).")
-					  .arg(vsp::SanitizeUrlForLog(main.server), vsp::MaskSecret(main.streamKey));
-		}
-		return true;
-	}
-	return false;
+bool VerticalOutputs::ValidateActiveDestination(QString *error, QString *field) const
+{
+	return vsp::ValidateDestination(vsp::ActiveDestination(settings), error, field);
 }
 
 bool VerticalOutputs::TestStreamDestination(QString *summary, QString *error) const
 {
-	QString conflict;
-	if (WouldConflictWithMainStream(&conflict)) {
-		if (error)
-			*error = vsp::ConflictUserMessage() + QStringLiteral("\n\n") + conflict;
+	QString field;
+	if (!ValidateActiveDestination(error, &field))
 		return false;
+
+	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
+	if (!video) {
+		/* Encoder check is best-effort when video is ready */
 	}
 
-	obs_service_t *service = CreateVerticalService(error);
-	if (!service)
+	obs_service_t *svc = CreateIndependentVerticalService(error);
+	if (!svc)
 		return false;
-
-	const vsp::StreamDestination d = vsp::DestinationFromService(service);
-	obs_service_release(service);
-
-	if (d.streamKey.isEmpty() && settings.streamDestMode != vsp::StreamDestMode::InheritMain) {
-		if (error)
-			*error = QStringLiteral("Vertical stream key is empty.");
-		return false;
-	}
+	obs_service_release(svc);
 
 	if (summary) {
 		*summary = QStringLiteral(
-				   "Destination OK\nMode: %1\nService: %2\nServer: %3\nKey: %4\nProtocol: %5")
-				   .arg(vsp::DestinationModeLabel(settings.streamDestMode),
-					d.serviceName.isEmpty() ? d.serviceType : d.serviceName,
-					vsp::SanitizeUrlForLog(d.server), vsp::MaskSecret(d.streamKey),
-					d.protocol.isEmpty() ? QStringLiteral("(unknown)") : d.protocol);
+			"Local configuration valid\n"
+			"Platform: %1\n"
+			"Destination: %2\n"
+			"Server host: %3\n"
+			"Stream key: configured\n"
+			"Protocol: %4\n\n"
+			"This test does not verify credentials with the platform and does not go live.\n"
+			"Server reachable / credentials verified: not tested.")
+			.arg(vsp::PlatformDisplayName(d.platform),
+			     d.name.isEmpty() ? QStringLiteral("(unnamed)") : d.name, vsp::HostnameOnly(d.server),
+			     d.server.startsWith(QStringLiteral("rtmps://"), Qt::CaseInsensitive)
+				     ? QStringLiteral("RTMPS")
+				     : QStringLiteral("RTMP"));
 	}
-	blog(LOG_INFO, "[obs-shorts-vertical] Test destination OK mode=%d server=%s key=%s",
-	     (int)settings.streamDestMode, vsp::SanitizeUrlForLog(d.server).toUtf8().constData(),
-	     vsp::MaskSecret(d.streamKey).toUtf8().constData());
+	blog(LOG_INFO, "[obs-shorts-vertical] Test destination OK platform=%s host=%s key=configured",
+	     vsp::PlatformDisplayName(d.platform).toUtf8().constData(),
+	     vsp::HostnameOnly(d.server).toUtf8().constData());
 	return true;
 }
 
-obs_service_t *VerticalOutputs::CreateVerticalService(QString *error) const
+obs_service_t *VerticalOutputs::CreateIndependentVerticalService(QString *error) const
 {
-	obs_service_t *main = obs_frontend_get_streaming_service();
-	if (!main) {
-		if (error)
-			*error = QStringLiteral("No streaming service is configured in OBS Settings → Stream.");
+	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
+	QString field;
+	if (!vsp::ValidateDestination(d, error, &field))
 		return nullptr;
-	}
 
-	if (settings.streamDestMode == vsp::StreamDestMode::InheritMain)
-		return main; /* caller releases */
-
-	OBSDataAutoRelease base = obs_service_get_settings(main);
 	OBSDataAutoRelease settingsData = obs_data_create();
-	if (base)
-		obs_data_apply(settingsData, base);
+	obs_data_set_string(settingsData, "server", d.server.trimmed().toUtf8().constData());
+	obs_data_set_string(settingsData, "key", d.streamKey.toUtf8().constData());
+	if (!d.username.isEmpty())
+		obs_data_set_string(settingsData, "username", d.username.toUtf8().constData());
+	if (!d.password.isEmpty())
+		obs_data_set_string(settingsData, "password", d.password.toUtf8().constData());
 
-	const char *typeId = obs_service_get_type(main);
-	QString type = typeId ? QString::fromUtf8(typeId) : QStringLiteral("rtmp_custom");
-
-	if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey) {
-		const QString key = settings.verticalStreamKey.trimmed();
-		if (key.isEmpty()) {
-			obs_service_release(main);
-			if (error)
-				*error = QStringLiteral("Configure a separate vertical stream key in Settings.");
-			return nullptr;
-		}
-		obs_data_set_string(settingsData, "key", key.toUtf8().constData());
-	} else if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
-		type = QStringLiteral("rtmp_custom");
-		const QString server = settings.verticalStreamServer.trimmed();
-		const QString key = settings.verticalStreamKey.trimmed();
-		if (server.isEmpty() || key.isEmpty()) {
-			obs_service_release(main);
-			if (error)
-				*error = QStringLiteral("Custom vertical server and stream key are required.");
-			return nullptr;
-		}
-		obs_data_set_string(settingsData, "server", server.toUtf8().constData());
-		obs_data_set_string(settingsData, "key", key.toUtf8().constData());
-	}
-
-	obs_service_release(main);
-
+	/* Always use an independent custom RTMP service — never the main OBS service object. */
 	obs_service_t *svc =
-		obs_service_create(type.toUtf8().constData(), "vertical_shorts_service", settingsData, nullptr);
-	if (!svc)
-		svc = obs_service_create("rtmp_custom", "vertical_shorts_service", settingsData, nullptr);
+		obs_service_create("rtmp_custom", "vertical_shorts_independent_service", settingsData, nullptr);
 	if (!svc && error)
-		*error = QStringLiteral("Could not create a vertical streaming service.");
+		*error = QStringLiteral("Could not create an independent vertical streaming service.");
 	return svc;
 }
 
@@ -404,12 +362,16 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	if (IsStreaming())
 		return true;
 
-	QString conflictDetail;
-	if (WouldConflictWithMainStream(&conflictDetail)) {
-		if (error)
-			*error = vsp::ConflictUserMessage() + QStringLiteral("\n\n") + conflictDetail;
-		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream blocked: duplicate destination (%s)",
-		     conflictDetail.toUtf8().constData());
+	const uint32_t cw = video_output_get_width(video);
+	const uint32_t ch = video_output_get_height(video);
+	if (!vsp::ValidateCanvasSize((int)cw, (int)ch, error)) {
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
+		return false;
+	}
+
+	QString field;
+	if (!ValidateActiveDestination(error, &field)) {
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
 		return false;
 	}
 
@@ -418,24 +380,21 @@ bool VerticalOutputs::StartStreaming(QString *error)
 		ownedStreamService = nullptr;
 	}
 
-	obs_service_t *service = CreateVerticalService(error);
-	if (!service)
-		return false;
+	SetLiveStatus(vsp::VerticalLiveStatus::Connecting);
 
-	/* Track privately created services for release; frontend service also needs release. */
-	const bool inherited = settings.streamDestMode == vsp::StreamDestMode::InheritMain;
-	if (!inherited)
-		ownedStreamService = service;
+	obs_service_t *service = CreateIndependentVerticalService(error);
+	if (!service) {
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
+		return false;
+	}
+	ownedStreamService = service;
 
 	EncoderPair pair = MakeEncoders(video, true, &lastEncoderName, &lastVideoBitrate, &lastAudioBitrate, error);
 	if (!pair.video || !pair.audio) {
-		if (inherited)
-			obs_service_release(service);
-		else {
-			obs_service_release(ownedStreamService);
-			ownedStreamService = nullptr;
-		}
+		obs_service_release(ownedStreamService);
+		ownedStreamService = nullptr;
 		ReleasePair(pair);
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
 		return false;
 	}
 
@@ -450,21 +409,16 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	}
 	if (!streamOutput) {
 		ReleasePair(pair);
-		if (inherited)
-			obs_service_release(service);
-		else {
-			obs_service_release(ownedStreamService);
-			ownedStreamService = nullptr;
-		}
+		obs_service_release(ownedStreamService);
+		ownedStreamService = nullptr;
 		if (error)
 			*error = QStringLiteral("Could not create a vertical streaming output.");
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
 		return false;
 	}
 
-	obs_output_set_service(streamOutput, service);
-	if (inherited)
-		obs_service_release(service);
-
+	/* Independent service + output only — never obs_frontend_get_streaming_service(). */
+	obs_output_set_service(streamOutput, ownedStreamService);
 	obs_output_set_media(streamOutput, video, obs_get_audio());
 	obs_output_set_video_encoder(streamOutput, pair.video);
 	obs_output_set_audio_encoder(streamOutput, pair.audio, 0);
@@ -473,27 +427,34 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	if (!obs_output_start(streamOutput)) {
 		const char *err = obs_output_get_last_error(streamOutput);
 		if (error)
-			*error = err && *err
-					 ? QString::fromUtf8(err)
-					 : QStringLiteral("Failed to start vertical stream.");
-		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream start failed (key masked in diagnostics)");
+			*error = err && *err ? QString::fromUtf8(err)
+					     : QStringLiteral("Failed to start vertical stream.");
+		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream start failed (credentials never logged)");
+		SetLiveStatus(vsp::VerticalLiveStatus::Error);
 		return false;
 	}
 
 	emit streamingChanged(true);
+	SetLiveStatus(vsp::VerticalLiveStatus::Live);
+	const vsp::StreamDestination d = vsp::ActiveDestination(settings);
+	blog(LOG_INFO, "[obs-shorts-vertical] Vertical live started platform=%s host=%s (main OBS untouched)",
+	     vsp::PlatformDisplayName(d.platform).toUtf8().constData(),
+	     vsp::HostnameOnly(d.server).toUtf8().constData());
+
 	if (settings.bufferStartOnVerticalLive)
 		EnsureClipBuffer(nullptr);
 	NoteUserActivity();
-	blog(LOG_INFO, "[obs-shorts-vertical] Vertical stream started (%s)",
-	     vsp::DestinationModeLabel(settings.streamDestMode).toUtf8().constData());
 	return true;
 }
 
 void VerticalOutputs::StopStreaming()
 {
-	if (streamOutput && obs_output_active(streamOutput))
+	if (streamOutput && obs_output_active(streamOutput)) {
+		SetLiveStatus(vsp::VerticalLiveStatus::Stopping);
 		obs_output_stop(streamOutput);
+	}
 	emit streamingChanged(false);
+	SetLiveStatus(vsp::VerticalLiveStatus::Offline);
 }
 
 bool VerticalOutputs::IsStreaming() const
@@ -908,7 +869,13 @@ void VerticalOutputs::StopAll()
 void VerticalOutputs::OnStreamStop(void *data, calldata_t *)
 {
 	auto *self = static_cast<VerticalOutputs *>(data);
-	QMetaObject::invokeMethod(self, [self]() { emit self->streamingChanged(false); }, Qt::QueuedConnection);
+	QMetaObject::invokeMethod(
+		self,
+		[self]() {
+			emit self->streamingChanged(false);
+			self->SetLiveStatus(vsp::VerticalLiveStatus::Offline);
+		},
+		Qt::QueuedConnection);
 }
 
 void VerticalOutputs::OnRecordStop(void *data, calldata_t *)

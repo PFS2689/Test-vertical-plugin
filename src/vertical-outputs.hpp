@@ -67,9 +67,12 @@ public:
 	bool StartStreaming(QString *error);
 	void StopStreaming();
 	bool IsStreaming() const;
+	vsp::VerticalLiveStatus LiveStatus() const { return liveStatus; }
+	QString LiveStatusText() const;
+
 	bool TestStreamDestination(QString *summary, QString *error) const;
 	QString StreamDestinationSummary() const;
-	bool WouldConflictWithMainStream(QString *detail) const;
+	bool ValidateActiveDestination(QString *error, QString *field = nullptr) const;
 
 	bool StartRecording(QString *error);
 	void StopRecording();
@@ -83,7 +86,7 @@ public:
 	int ConfiguredBufferSeconds() const;
 	BufferStatus GetBufferStatus() const;
 	QString BufferStatusText() const;
-	void NoteUserActivity(); /* resets idle timer */
+	void NoteUserActivity();
 
 	ClipSaveInfo SaveShortClip();
 	ClipSaveInfo SaveLongClip();
@@ -102,6 +105,7 @@ public:
 
 signals:
 	void streamingChanged(bool active);
+	void liveStatusChanged(vsp::VerticalLiveStatus status, const QString &text);
 	void recordingChanged(bool active);
 	void clipBufferChanged(bool active);
 	void bufferStatusChanged(BufferStatus status, const QString &text);
@@ -116,7 +120,8 @@ private slots:
 private:
 	QString MakeOutputFilename(const QString &outputType, int durationSeconds = 0) const;
 	ClipSaveInfo SaveClipInternal(int seconds, ClipKind kind, bool allowPartial);
-	obs_service_t *CreateVerticalService(QString *error) const;
+	obs_service_t *CreateIndependentVerticalService(QString *error) const;
+	void SetLiveStatus(vsp::VerticalLiveStatus s);
 	void UpdateBufferStatus(bool emitSignal = true);
 	void EmitBufferStatus();
 	static void OnStreamStop(void *data, calldata_t *cd);
@@ -142,6 +147,7 @@ private:
 	ClipKind pendingClipKind = ClipKind::Short;
 	int pendingClipSeconds = 0;
 	BufferStatus bufferStatus = BufferStatus::Stopped;
+	vsp::VerticalLiveStatus liveStatus = vsp::VerticalLiveStatus::Offline;
 
 	QTimer statusTimer;
 	QTimer idleTimer;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "plugin-settings.hpp"
+#include "stream-destination.hpp"
 #include "vertical-outputs.hpp"
 
 #include <QDialog>
@@ -14,6 +15,10 @@ class QCheckBox;
 class QTabWidget;
 class QDateEdit;
 class QTimeEdit;
+class QPushButton;
+class QTextEdit;
+class QGroupBox;
+class QFrame;
 
 class SettingsDialog : public QDialog {
 	Q_OBJECT
@@ -24,6 +29,10 @@ public:
 
 	vsp::PluginSettings result() const { return settings; }
 	bool WantsAutomationReset() const { return resetAutomation; }
+	void FocusStreamingTab();
+
+protected:
+	void hideEvent(QHideEvent *event) override;
 
 private slots:
 	void OnCanvasPresetChanged(int index);
@@ -32,8 +41,16 @@ private slots:
 	void OnBrowsePath();
 	void OnResetDefaults();
 	void OnResetAutomation();
-	void OnStreamDestModeChanged(int index);
+	void OnPlatformChanged(int index);
+	void OnDestinationPickerChanged(int index);
+	void OnToggleShowKey(bool checked);
 	void OnTestDestination();
+	void OnSaveDestination();
+	void OnClearCredentials();
+	void OnAddDestination();
+	void OnRenameDestination();
+	void OnDeleteDestination();
+	void OnOpenPlatformHelp();
 	void OnAccepted();
 
 private:
@@ -44,7 +61,15 @@ private:
 	void BuildStreamingTab(QWidget *tab);
 	void BuildAdvancedTab(QWidget *tab);
 	void SyncFieldsFromSettings();
+	void SyncStreamingFields();
+	void UpdateDestinationStatusCard();
+	void UpdateProtocolIndicator();
+	void ApplyPlatformFieldVisibility();
 	bool ValidateAndCommit(QString *error, QString *warning);
+	void PersistActiveDestinationSecrets(bool applyPlatformFromCombo = true);
+	void LoadSecretsIntoDestinations();
+	vsp::StreamDestination CurrentUiDestination(bool applyPlatformFromCombo = true) const;
+	void HighlightInvalidField(const QString &field);
 
 	vsp::PluginSettings settings;
 	VerticalOutputs *outputs = nullptr;
@@ -53,6 +78,7 @@ private:
 	vsp::AutomationStatus automationStatus = vsp::AutomationStatus::Disabled;
 	QString automationStatusText;
 	bool resetAutomation = false;
+	bool suppressPlatformPrompt = false;
 
 	/* Canvas */
 	QComboBox *presetCombo = nullptr;
@@ -71,7 +97,7 @@ private:
 	QComboBox *shortClipCombo = nullptr;
 	QSpinBox *shortCustomSpin = nullptr;
 	QComboBox *longClipCombo = nullptr;
-	QLineEdit *longCustomEdit = nullptr; /* MM:SS */
+	QLineEdit *longCustomEdit = nullptr;
 	QSpinBox *longCustomMin = nullptr;
 	QSpinBox *longCustomSec = nullptr;
 	QLabel *longWarnLabel = nullptr;
@@ -83,13 +109,6 @@ private:
 	QCheckBox *bufferOnLiveCheck = nullptr;
 	QCheckBox *bufferOnRecordCheck = nullptr;
 	QLabel *bufferStatusInSettings = nullptr;
-
-	/* Streaming destination */
-	QComboBox *streamDestMode = nullptr;
-	QLineEdit *verticalServerEdit = nullptr;
-	QLineEdit *verticalKeyEdit = nullptr;
-	QLabel *streamDestSummary = nullptr;
-	QPushButton *testDestBtn = nullptr;
 
 	/* Automation */
 	QCheckBox *autoMaster = nullptr;
@@ -120,6 +139,27 @@ private:
 	QLabel *autoStatusLabel = nullptr;
 	QCheckBox *confirmManualStop = nullptr;
 
-	/* Streaming / Advanced */
+	/* Streaming destination */
+	QTabWidget *tabs = nullptr;
+	int streamingTabIndex = -1;
 	QLabel *streamHelp = nullptr;
+	QComboBox *platformCombo = nullptr;
+	QComboBox *destinationPicker = nullptr;
+	QFrame *statusCard = nullptr;
+	QLabel *statusCardLabel = nullptr;
+	QLineEdit *destNameEdit = nullptr;
+	QLineEdit *verticalServerEdit = nullptr;
+	QLabel *protocolLabel = nullptr;
+	QLineEdit *verticalKeyEdit = nullptr;
+	QPushButton *showKeyBtn = nullptr;
+	QLineEdit *usernameEdit = nullptr;
+	QLineEdit *passwordEdit = nullptr;
+	QComboBox *twitchIngestCombo = nullptr;
+	QLabel *platformNote = nullptr;
+	QPushButton *platformHelpBtn = nullptr;
+	QPushButton *testDestBtn = nullptr;
+	QPushButton *saveDestBtn = nullptr;
+	QPushButton *clearCredBtn = nullptr;
+	QLabel *secureStoreLabel = nullptr;
+	QLabel *liveStatusLabel = nullptr;
 };

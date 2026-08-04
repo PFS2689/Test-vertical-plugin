@@ -1,31 +1,122 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
+#include <QUrl>
+#include <QUuid>
 #include <cstdint>
-
-#ifdef VSP_SETTINGS_TEST
-#else
-#include <obs-frontend-api.h>
-#include <obs.hpp>
-#include <obs-module.h>
-#endif
 
 namespace vsp {
 
-enum class StreamDestMode {
-	InheritMain = 0,
-	SeparateKey = 1,
-	CustomServerAndKey = 2,
+enum class StreamPlatform {
+	YouTube = 0,
+	Twitch = 1,
+	TikTok = 2,
+	Instagram = 3,
+	CustomRtmp = 4,
+};
+
+enum class VerticalLiveStatus {
+	Offline = 0,
+	Connecting,
+	Live,
+	Reconnecting,
+	Stopping,
+	Error,
 };
 
 struct StreamDestination {
-	QString serviceType;   /* e.g. rtmp_common, rtmp_custom */
-	QString serviceName;   /* friendly service / platform name */
-	QString server;        /* ingest URL (may be empty) */
-	QString streamKey;     /* never log this unmasked */
-	QString protocol;      /* rtmp / rtmps / srt / etc when known */
-	QString accountHint;   /* non-secret account/channel label if present */
+	QString id;              /* stable UUID */
+	StreamPlatform platform = StreamPlatform::CustomRtmp;
+	QString name;            /* user-facing destination name */
+	QString server;          /* ingest URL — non-secret hostname ok in config */
+	QString streamKey;       /* secret — memory only / secure store */
+	QString username;        /* optional */
+	QString password;        /* secret — memory only / secure store */
+	QString twitchIngestId;  /* Twitch ingest selector id */
+	bool useRecommendedTwitchIngest = true;
 };
+
+inline QString PlatformDisplayName(StreamPlatform p)
+{
+	switch (p) {
+	case StreamPlatform::YouTube:
+		return QStringLiteral("YouTube");
+	case StreamPlatform::Twitch:
+		return QStringLiteral("Twitch");
+	case StreamPlatform::TikTok:
+		return QStringLiteral("TikTok");
+	case StreamPlatform::Instagram:
+		return QStringLiteral("Instagram");
+	case StreamPlatform::CustomRtmp:
+		return QStringLiteral("Custom RTMP Server");
+	}
+	return QStringLiteral("Unknown");
+}
+
+inline QString PlatformIconResource(StreamPlatform p)
+{
+	/* Bundled original PNG icons (not official brand marks). SVG sources also shipped. */
+	switch (p) {
+	case StreamPlatform::YouTube:
+		return QStringLiteral(":/vsp/icons/youtube.png");
+	case StreamPlatform::Twitch:
+		return QStringLiteral(":/vsp/icons/twitch.png");
+	case StreamPlatform::TikTok:
+		return QStringLiteral(":/vsp/icons/tiktok.png");
+	case StreamPlatform::Instagram:
+		return QStringLiteral(":/vsp/icons/instagram.png");
+	case StreamPlatform::CustomRtmp:
+		return QStringLiteral(":/vsp/icons/custom-rtmp.png");
+	}
+	return QStringLiteral(":/vsp/icons/custom-rtmp.png");
+}
+
+inline QString PlatformHelpUrl(StreamPlatform p)
+{
+	switch (p) {
+	case StreamPlatform::YouTube:
+		return QStringLiteral("https://support.google.com/youtube/answer/2907883");
+	case StreamPlatform::Twitch:
+		return QStringLiteral("https://help.twitch.tv/s/article/twitch-stream-key-guide");
+	case StreamPlatform::TikTok:
+		return QStringLiteral("https://www.tiktok.com/creators/creator-portal/");
+	case StreamPlatform::Instagram:
+		return QStringLiteral("https://help.instagram.com/");
+	case StreamPlatform::CustomRtmp:
+		return QString();
+	}
+	return QString();
+}
+
+/* Confirmed public default YouTube RTMPS ingest (user must still supply their own key). */
+inline QString SuggestedYouTubeServer()
+{
+	return QStringLiteral("rtmps://a.rtmp.youtube.com/live2");
+}
+
+struct TwitchIngest {
+	QString id;
+	QString name;
+	QString url;
+};
+
+inline QList<TwitchIngest> TwitchIngestOptions()
+{
+	/* Publicly documented Twitch RTMPS ingest endpoints (user supplies their own key). */
+	return {
+		{QStringLiteral("auto"), QStringLiteral("Recommended (auto)"),
+		 QStringLiteral("rtmps://live.twitch.tv/app")},
+		{QStringLiteral("sfo"), QStringLiteral("US West (San Francisco)"),
+		 QStringLiteral("rtmps://live.twitch.tv/app")},
+		{QStringLiteral("nyc"), QStringLiteral("US East (New York)"),
+		 QStringLiteral("rtmps://live.twitch.tv/app")},
+		{QStringLiteral("ams"), QStringLiteral("EU Central (Amsterdam)"),
+		 QStringLiteral("rtmps://live.twitch.tv/app")},
+		{QStringLiteral("syd"), QStringLiteral("Asia Pacific (Sydney)"),
+		 QStringLiteral("rtmps://live.twitch.tv/app")},
+	};
+}
 
 inline QString MaskSecret(const QString &secret, int keepTail = 4)
 {
@@ -38,14 +129,12 @@ inline QString MaskSecret(const QString &secret, int keepTail = 4)
 
 inline QString SanitizeUrlForLog(const QString &url)
 {
-	/* Strip userinfo and query that might contain tokens */
 	QString s = url.trimmed();
 	const int scheme = s.indexOf(QStringLiteral("://"));
 	if (scheme >= 0) {
 		const int authEnd = s.indexOf(QLatin1Char('@'), scheme + 3);
-		if (authEnd > scheme) {
+		if (authEnd > scheme)
 			s = s.left(scheme + 3) + QStringLiteral("***@") + s.mid(authEnd + 1);
-		}
 	}
 	const int q = s.indexOf(QLatin1Char('?'));
 	if (q >= 0)
@@ -53,100 +142,116 @@ inline QString SanitizeUrlForLog(const QString &url)
 	return s;
 }
 
-inline bool DestinationsConflict(const StreamDestination &a, const StreamDestination &b)
+inline QString HostnameOnly(const QString &url)
 {
-	if (a.streamKey.isEmpty() || b.streamKey.isEmpty())
-		return false;
-	if (a.streamKey != b.streamKey)
-		return false;
-
-	/* Same key + same server (or both empty custom) is a conflict */
-	const QString sa = a.server.trimmed();
-	const QString sb = b.server.trimmed();
-	if (!sa.isEmpty() && !sb.isEmpty() && sa.compare(sb, Qt::CaseInsensitive) == 0)
-		return true;
-	if (sa.isEmpty() && sb.isEmpty() && a.serviceType == b.serviceType)
-		return true;
-	/* Same key with different servers: allow (distinct destinations) */
-	if (!sa.isEmpty() && !sb.isEmpty() && sa.compare(sb, Qt::CaseInsensitive) != 0)
-		return false;
-	/* Same key, one server unknown — treat as conflict when service types match */
-	return a.serviceType == b.serviceType;
+	QUrl u(url.trimmed());
+	if (!u.isValid() || u.host().isEmpty()) {
+		/* Fallback parse */
+		QString s = url.trimmed();
+		const int scheme = s.indexOf(QStringLiteral("://"));
+		if (scheme >= 0)
+			s = s.mid(scheme + 3);
+		const int slash = s.indexOf(QLatin1Char('/'));
+		if (slash >= 0)
+			s = s.left(slash);
+		const int at = s.indexOf(QLatin1Char('@'));
+		if (at >= 0)
+			s = s.mid(at + 1);
+		return s;
+	}
+	return u.host();
 }
 
-inline QString DestinationModeLabel(StreamDestMode mode)
+inline bool ProtocolSupported(const QString &url, QString *error = nullptr)
 {
-	switch (mode) {
-	case StreamDestMode::InheritMain:
-		return QStringLiteral("Main OBS destination");
-	case StreamDestMode::SeparateKey:
-		return QStringLiteral("Separate vertical stream key");
-	case StreamDestMode::CustomServerAndKey:
-		return QStringLiteral("Custom vertical server + key");
+	const QString s = url.trimmed().toLower();
+	if (s.startsWith(QStringLiteral("rtmps://")) || s.startsWith(QStringLiteral("rtmp://")))
+		return true;
+	if (error)
+		*error = QStringLiteral("Only RTMP and RTMPS are supported for Vertical Streaming.");
+	return false;
+}
+
+inline bool ValidateServerUrl(const QString &url, QString *error = nullptr)
+{
+	const QString s = url.trimmed();
+	if (s.isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Server URL is required.");
+		return false;
+	}
+	if (!ProtocolSupported(s, error))
+		return false;
+	QUrl u(s);
+	if (!u.isValid() || u.host().isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Server URL is not a valid RTMP/RTMPS address.");
+		return false;
+	}
+	return true;
+}
+
+inline bool ValidateDestination(const StreamDestination &d, QString *error = nullptr, QString *field = nullptr)
+{
+	if (d.name.trimmed().isEmpty() && d.platform == StreamPlatform::CustomRtmp) {
+		/* name optional for presets; custom encouraged but not required */
+	}
+	if (!ValidateServerUrl(d.server, error)) {
+		if (field)
+			*field = QStringLiteral("server");
+		return false;
+	}
+	if (d.streamKey.trimmed().isEmpty()) {
+		if (error)
+			*error = QStringLiteral("Stream key is required for the Vertical Streaming destination.");
+		if (field)
+			*field = QStringLiteral("key");
+		return false;
+	}
+	return true;
+}
+
+inline StreamDestination MakeDefaultDestination(StreamPlatform platform)
+{
+	StreamDestination d;
+	d.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+	d.platform = platform;
+	d.name = PlatformDisplayName(platform);
+	switch (platform) {
+	case StreamPlatform::YouTube:
+		d.server = SuggestedYouTubeServer();
+		break;
+	case StreamPlatform::Twitch:
+		d.server = QStringLiteral("rtmps://live.twitch.tv/app");
+		d.twitchIngestId = QStringLiteral("auto");
+		d.useRecommendedTwitchIngest = true;
+		break;
+	case StreamPlatform::TikTok:
+	case StreamPlatform::Instagram:
+	case StreamPlatform::CustomRtmp:
+		d.server.clear();
+		break;
+	}
+	return d;
+}
+
+inline QString VerticalLiveStatusLabel(VerticalLiveStatus s)
+{
+	switch (s) {
+	case VerticalLiveStatus::Offline:
+		return QStringLiteral("Offline");
+	case VerticalLiveStatus::Connecting:
+		return QStringLiteral("Connecting");
+	case VerticalLiveStatus::Live:
+		return QStringLiteral("Live");
+	case VerticalLiveStatus::Reconnecting:
+		return QStringLiteral("Reconnecting");
+	case VerticalLiveStatus::Stopping:
+		return QStringLiteral("Stopping");
+	case VerticalLiveStatus::Error:
+		return QStringLiteral("Error");
 	}
 	return QStringLiteral("Unknown");
 }
-
-inline QString ConflictUserMessage()
-{
-	return QStringLiteral(
-		"Vertical Shorts cannot start a second live connection to the same destination "
-		"while the main OBS stream is already active.\n\n"
-		"Most platforms reject two simultaneous encoders using the same stream key.\n\n"
-		"To go live vertically at the same time:\n"
-		"• Configure a separate Vertical Streaming destination in Settings "
-		"(different stream key and/or ingest server), or\n"
-		"• Stop the main OBS stream first, or\n"
-		"• Use a multi-output / dual-stream feature provided by your platform "
-		"(if available) with distinct keys.\n\n"
-		"This is a platform restriction — the plugin cannot bypass it.");
-}
-
-#ifndef VSP_SETTINGS_TEST
-inline StreamDestination DestinationFromService(obs_service_t *service)
-{
-	StreamDestination d;
-	if (!service)
-		return d;
-
-	const char *type = obs_service_get_type(service);
-	d.serviceType = type ? QString::fromUtf8(type) : QString();
-
-	OBSDataAutoRelease settings = obs_service_get_settings(service);
-	if (settings) {
-		d.serviceName = QString::fromUtf8(obs_data_get_string(settings, "service"));
-		d.server = QString::fromUtf8(obs_data_get_string(settings, "server"));
-		d.streamKey = QString::fromUtf8(obs_data_get_string(settings, "key"));
-		if (d.streamKey.isEmpty())
-			d.streamKey = QString::fromUtf8(obs_data_get_string(settings, "stream_key"));
-		d.accountHint = QString::fromUtf8(obs_data_get_string(settings, "username"));
-		if (d.accountHint.isEmpty())
-			d.accountHint = QString::fromUtf8(obs_data_get_string(settings, "channel"));
-	}
-
-	if (d.server.startsWith(QStringLiteral("rtmps://"), Qt::CaseInsensitive))
-		d.protocol = QStringLiteral("rtmps");
-	else if (d.server.startsWith(QStringLiteral("rtmp://"), Qt::CaseInsensitive))
-		d.protocol = QStringLiteral("rtmp");
-	else if (d.server.startsWith(QStringLiteral("srt://"), Qt::CaseInsensitive))
-		d.protocol = QStringLiteral("srt");
-
-	return d;
-}
-
-inline StreamDestination MainStreamingDestination()
-{
-	obs_service_t *service = obs_frontend_get_streaming_service();
-	StreamDestination d = DestinationFromService(service);
-	if (service)
-		obs_service_release(service);
-	return d;
-}
-
-inline bool MainStreamingActive()
-{
-	return obs_frontend_streaming_active();
-}
-#endif
 
 } // namespace vsp

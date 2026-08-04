@@ -33,7 +33,7 @@
     },
     "name": "obs-shorts-vertical",
     "displayName": "Vertical Shorts Plugin",
-    "version": "1.3.0",
+	"version": "1.4.0",
     "author": "Vertical Shorts Plugin Contributors",
     "website": "https://github.com/PFS2689/verticalshorts",
     "email": "noreply@example.com",

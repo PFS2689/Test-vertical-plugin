@@ -1,5 +1,6 @@
 #include "shorts-dock.hpp"
 #include "audio-mixer-panel.hpp"
+#include "credential-store.hpp"
 #include "display-helpers.hpp"
 #include "settings-dialog.hpp"
 
@@ -325,6 +326,7 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	setMinimumHeight(360);
 
 	settings.recordingPath = vsp::DefaultRecordingPath();
+	vsp::EnsureDefaultDestinations(settings);
 	vsp::CanvasSizeForPreset(settings.canvasPreset, settings.customWidth, settings.customHeight, verticalWidth,
 				 verticalHeight);
 
@@ -1290,14 +1292,37 @@ void ShortsDock::OnGoLive()
 {
 	if (!outputs)
 		return;
+	if (shuttingDown) {
+		QMessageBox::warning(this, Translate("GoLive"), Translate("ObsShuttingDown"));
+		goLiveBtn->setChecked(false);
+		return;
+	}
 	if (outputs->IsStreaming()) {
 		outputs->StopStreaming();
 		return;
 	}
+
 	QString err;
+	QString field;
+	if (!outputs->ValidateActiveDestination(&err, &field)) {
+		goLiveBtn->setChecked(false);
+		QMessageBox box(QMessageBox::Warning, Translate("GoLive"), err, QMessageBox::NoButton, this);
+		auto *openBtn = box.addButton(Translate("OpenStreamingSettings"), QMessageBox::AcceptRole);
+		box.addButton(QMessageBox::Cancel);
+		box.exec();
+		if (box.clickedButton() == openBtn)
+			OpenSettingsStreaming();
+		return;
+	}
+
 	if (!outputs->StartStreaming(&err)) {
 		goLiveBtn->setChecked(false);
-		QMessageBox::warning(this, Translate("GoLive"), err);
+		QMessageBox box(QMessageBox::Warning, Translate("GoLive"), err, QMessageBox::NoButton, this);
+		auto *openBtn = box.addButton(Translate("OpenStreamingSettings"), QMessageBox::AcceptRole);
+		box.addButton(QMessageBox::Cancel);
+		box.exec();
+		if (box.clickedButton() == openBtn)
+			OpenSettingsStreaming();
 	}
 }
 
@@ -1387,12 +1412,19 @@ void ShortsDock::CollectSceneLists(QStringList &names, QStringList &uuids) const
 
 void ShortsDock::OnSettings()
 {
+	OpenSettingsStreaming(false);
+}
+
+void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
+{
 	QStringList names, uuids;
 	CollectSceneLists(names, uuids);
 	const QString statusText = automation ? automation->StatusText() : QString();
 	const auto status = automation ? automation->Status() : vsp::AutomationStatus::Disabled;
 
 	SettingsDialog dlg(settings, outputs.get(), names, uuids, status, statusText, this);
+	if (focusStreaming)
+		dlg.FocusStreamingTab();
 	if (dlg.exec() != QDialog::Accepted)
 		return;
 
@@ -1653,6 +1685,14 @@ void ShortsDock::RefreshTransformControls()
 
 void ShortsDock::SaveSettings(obs_data_t *data)
 {
+	/* Persist secrets to OS credential store; settings blob never contains keys. */
+	for (const vsp::StreamDestination &d : settings.destinations) {
+		vsp::SaveSecret(vsp::KeyTarget(d.id), d.streamKey);
+		if (!d.password.isEmpty())
+			vsp::SaveSecret(vsp::PasswordTarget(d.id), d.password);
+		else
+			vsp::DeleteSecret(vsp::PasswordTarget(d.id));
+	}
 	vsp::SaveSettingsToData(data, settings, verticalWidth, verticalHeight);
 	SaveHotkeys(data);
 
@@ -1676,8 +1716,31 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	loadingSettings = true;
 
 	settings = vsp::LoadSettingsFromData(data, verticalWidth, verticalHeight);
+	vsp::EnsureDefaultDestinations(settings);
+
+	/* Load secrets from secure store. Migrate any legacy in-memory keys into the store. */
+	for (vsp::StreamDestination &d : settings.destinations) {
+		if (!d.streamKey.isEmpty()) {
+			vsp::SaveSecret(vsp::KeyTarget(d.id), d.streamKey);
+		} else {
+			QString key;
+			vsp::LoadSecret(vsp::KeyTarget(d.id), &key);
+			d.streamKey = key;
+		}
+		if (!d.password.isEmpty()) {
+			vsp::SaveSecret(vsp::PasswordTarget(d.id), d.password);
+		} else {
+			QString pass;
+			vsp::LoadSecret(vsp::PasswordTarget(d.id), &pass);
+			d.password = pass;
+		}
+	}
+
 	LoadHotkeys(data);
 	ApplyCanvasFromSettings();
+
+	if (outputs)
+		outputs->ApplySettings(settings);
 
 	verticalMirrors.clear();
 

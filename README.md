@@ -1,6 +1,6 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.3.0** — Windows
+**Version 1.4.0** — Windows
 
 Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTok, Reels, and Twitch vertical.
 
@@ -17,16 +17,18 @@ Dock title: **Vertical Shorts**
 - OBS-style panels: Scenes, Sources, Audio Mixer (real meters), Transitions
 - Canvas controls (bottom-right): 🟢 Go Live · ⏺️ Record · 📸 Short Clip · 📷 Long Clip · ⚙️ Settings
 - Vertical transforms are stored on private mirror scenes so your main OBS canvas is not overwritten
-- Separate vertical stream destination options, clip-buffer readiness status, automation, and hotkeys
+- **Independent Vertical Streaming Destination** (YouTube / Twitch / TikTok / Instagram / Custom RTMP) — never inherits the main OBS stream key or service
+- Clip-buffer readiness status, recording automation, and hotkeys
 
 ## Install / test
 
 1. Install the current Setup.exe or zip release.
 2. Open OBS.
 3. Go to **View → Docks → Vertical Shorts**.
-4. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.
-5. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
-6. Confirm output files save to the selected vertical recording path.
+4. Open **⚙️ Settings → Vertical Streaming** and configure a Vertical Streaming Destination with a vertical-only server URL and stream key from the platform dashboard.
+5. Confirm the main OBS canvas and main stream settings remain unchanged.
+6. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+7. Confirm output files save to the selected vertical recording path.
 
 ## Requirements
 

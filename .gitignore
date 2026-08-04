@@ -22,3 +22,5 @@ CMakeCache.txt
 CMakeFiles/
 compile_commands.json
 .ccache/
+build-tests/
+cmake/.CMakeBuildNumber

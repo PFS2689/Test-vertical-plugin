@@ -106,6 +106,7 @@ private slots:
 	void OnShortClip();
 	void OnLongClip();
 	void OnSettings();
+	void OpenSettingsStreaming(bool focusStreaming = true);
 	void RefreshScenesList();
 	void RefreshSourcesList();
 	void RefreshMixer();
