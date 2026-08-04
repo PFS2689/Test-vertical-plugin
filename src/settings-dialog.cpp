@@ -207,10 +207,32 @@ void SettingsDialog::BuildClipsTab(QWidget *tab)
 
 	clipBufferCheck = new QCheckBox(QString::fromUtf8(obs_module_text("ClipBufferEnabled")), tab);
 	root->addWidget(clipBufferCheck);
+	autoStartBufferCheck = new QCheckBox(QString::fromUtf8(obs_module_text("AutoStartClipBuffer")), tab);
+	root->addWidget(autoStartBufferCheck);
+	stopIdleCheck = new QCheckBox(QString::fromUtf8(obs_module_text("StopBufferWhenIdle")), tab);
+	root->addWidget(stopIdleCheck);
+	idleTimeoutSpin = new QSpinBox(tab);
+	idleTimeoutSpin->setRange(30, 7200);
+	idleTimeoutSpin->setSuffix(QStringLiteral(" s"));
+	auto *idleForm = new QFormLayout();
+	idleForm->addRow(QString::fromUtf8(obs_module_text("BufferIdleTimeout")), idleTimeoutSpin);
+	root->addLayout(idleForm);
+	saveAvailableCheck = new QCheckBox(QString::fromUtf8(obs_module_text("SaveAvailableWhenShort")), tab);
+	root->addWidget(saveAvailableCheck);
+	bufferOnLiveCheck = new QCheckBox(QString::fromUtf8(obs_module_text("BufferStartOnLive")), tab);
+	root->addWidget(bufferOnLiveCheck);
+	bufferOnRecordCheck = new QCheckBox(QString::fromUtf8(obs_module_text("BufferStartOnRecord")), tab);
+	root->addWidget(bufferOnRecordCheck);
+	bufferStatusInSettings = new QLabel(tab);
+	bufferStatusInSettings->setWordWrap(true);
+	root->addWidget(bufferStatusInSettings);
 
 	auto *note = new QLabel(QString::fromUtf8(obs_module_text("ClipsHelp")), tab);
 	note->setWordWrap(true);
 	root->addWidget(note);
+	auto *preroll = new QLabel(QString::fromUtf8(obs_module_text("BufferPrerollNote")), tab);
+	preroll->setWordWrap(true);
+	root->addWidget(preroll);
 	root->addStretch(1);
 }
 
@@ -341,6 +363,40 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 	streamHelp = new QLabel(QString::fromUtf8(obs_module_text("StreamingHelp")), tab);
 	streamHelp->setWordWrap(true);
 	lay->addWidget(streamHelp);
+
+	auto *form = new QFormLayout();
+	streamDestMode = new QComboBox(tab);
+	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestInheritMain")),
+				(int)vsp::StreamDestMode::InheritMain);
+	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestSeparateKey")),
+				(int)vsp::StreamDestMode::SeparateKey);
+	streamDestMode->addItem(QString::fromUtf8(obs_module_text("DestCustomServerKey")),
+				(int)vsp::StreamDestMode::CustomServerAndKey);
+	connect(streamDestMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&SettingsDialog::OnStreamDestModeChanged);
+
+	verticalServerEdit = new QLineEdit(tab);
+	verticalServerEdit->setPlaceholderText(QStringLiteral("rtmp://…"));
+	verticalKeyEdit = new QLineEdit(tab);
+	verticalKeyEdit->setEchoMode(QLineEdit::Password);
+	verticalKeyEdit->setPlaceholderText(QString::fromUtf8(obs_module_text("StreamKeyPlaceholder")));
+
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamDestination")), streamDestMode);
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamServer")), verticalServerEdit);
+	form->addRow(QString::fromUtf8(obs_module_text("VerticalStreamKey")), verticalKeyEdit);
+	lay->addLayout(form);
+
+	streamDestSummary = new QLabel(tab);
+	streamDestSummary->setWordWrap(true);
+	lay->addWidget(streamDestSummary);
+
+	testDestBtn = new QPushButton(QString::fromUtf8(obs_module_text("TestDestination")), tab);
+	connect(testDestBtn, &QPushButton::clicked, this, &SettingsDialog::OnTestDestination);
+	lay->addWidget(testDestBtn);
+
+	auto *warn = new QLabel(QString::fromUtf8(obs_module_text("DualStreamPlatformNote")), tab);
+	warn->setWordWrap(true);
+	lay->addWidget(warn);
 	lay->addStretch(1);
 }
 
@@ -389,6 +445,34 @@ void SettingsDialog::SyncFieldsFromSettings()
 
 	pathEdit->setText(settings.recordingPath);
 	clipBufferCheck->setChecked(settings.clipBufferEnabled);
+	if (autoStartBufferCheck)
+		autoStartBufferCheck->setChecked(settings.autoStartClipBuffer);
+	if (stopIdleCheck)
+		stopIdleCheck->setChecked(settings.stopBufferWhenIdle);
+	if (idleTimeoutSpin)
+		idleTimeoutSpin->setValue(settings.bufferIdleTimeoutSeconds);
+	if (saveAvailableCheck)
+		saveAvailableCheck->setChecked(settings.saveAvailableWhenShort);
+	if (bufferOnLiveCheck)
+		bufferOnLiveCheck->setChecked(settings.bufferStartOnVerticalLive);
+	if (bufferOnRecordCheck)
+		bufferOnRecordCheck->setChecked(settings.bufferStartOnVerticalRecord);
+	if (bufferStatusInSettings && outputs)
+		bufferStatusInSettings->setText(outputs->BufferStatusText());
+
+	if (streamDestMode) {
+		for (int i = 0; i < streamDestMode->count(); ++i) {
+			if (streamDestMode->itemData(i).toInt() == (int)settings.streamDestMode) {
+				streamDestMode->setCurrentIndex(i);
+				break;
+			}
+		}
+		verticalServerEdit->setText(settings.verticalStreamServer);
+		verticalKeyEdit->setText(settings.verticalStreamKey);
+		OnStreamDestModeChanged(streamDestMode->currentIndex());
+		if (outputs)
+			streamDestSummary->setText(outputs->StreamDestinationSummary());
+	}
 
 	if (outputs) {
 		encoderLabel->setText(outputs->ActiveEncoderSummary());
@@ -562,6 +646,37 @@ bool SettingsDialog::ValidateAndCommit(QString *error, QString *warning)
 
 	settings.recordingPath = pathEdit->text().trimmed();
 	settings.clipBufferEnabled = clipBufferCheck->isChecked();
+	if (autoStartBufferCheck)
+		settings.autoStartClipBuffer = autoStartBufferCheck->isChecked();
+	if (stopIdleCheck)
+		settings.stopBufferWhenIdle = stopIdleCheck->isChecked();
+	if (idleTimeoutSpin)
+		settings.bufferIdleTimeoutSeconds = idleTimeoutSpin->value();
+	if (saveAvailableCheck)
+		settings.saveAvailableWhenShort = saveAvailableCheck->isChecked();
+	if (bufferOnLiveCheck)
+		settings.bufferStartOnVerticalLive = bufferOnLiveCheck->isChecked();
+	if (bufferOnRecordCheck)
+		settings.bufferStartOnVerticalRecord = bufferOnRecordCheck->isChecked();
+
+	if (streamDestMode) {
+		settings.streamDestMode = static_cast<vsp::StreamDestMode>(streamDestMode->currentData().toInt());
+		settings.verticalStreamServer = verticalServerEdit->text().trimmed();
+		settings.verticalStreamKey = verticalKeyEdit->text(); /* keep as entered; do not trim mid-key */
+		if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey &&
+		    settings.verticalStreamKey.trimmed().isEmpty()) {
+			if (error)
+				*error = QStringLiteral("Separate vertical stream key cannot be empty.");
+			return false;
+		}
+		if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
+			if (settings.verticalStreamServer.isEmpty() || settings.verticalStreamKey.trimmed().isEmpty()) {
+				if (error)
+					*error = QStringLiteral("Custom vertical server and stream key are required.");
+				return false;
+			}
+		}
+	}
 
 	settings.automationEnabled = autoMaster->isChecked();
 	settings.autoStartOnMainStream = startMainStream->isChecked();
@@ -607,4 +722,40 @@ void SettingsDialog::OnAccepted()
 		QMessageBox::information(this, QString::fromUtf8(obs_module_text("Settings")), warning);
 	}
 	accept();
+}
+
+void SettingsDialog::OnStreamDestModeChanged(int)
+{
+	if (!streamDestMode)
+		return;
+	const auto mode = static_cast<vsp::StreamDestMode>(streamDestMode->currentData().toInt());
+	const bool needKey = mode == vsp::StreamDestMode::SeparateKey || mode == vsp::StreamDestMode::CustomServerAndKey;
+	const bool needServer = mode == vsp::StreamDestMode::CustomServerAndKey;
+	verticalKeyEdit->setEnabled(needKey);
+	verticalServerEdit->setEnabled(needServer);
+	if (streamDestSummary)
+		streamDestSummary->setText(QStringLiteral("Using: %1").arg(vsp::DestinationModeLabel(mode)));
+}
+
+void SettingsDialog::OnTestDestination()
+{
+	QString error;
+	QString warning;
+	if (!ValidateAndCommit(&error, &warning)) {
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")), error);
+		return;
+	}
+	if (!outputs) {
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")),
+				     QStringLiteral("Vertical outputs are not ready."));
+		return;
+	}
+	outputs->ApplySettings(settings);
+	QString summary;
+	QString err;
+	if (!outputs->TestStreamDestination(&summary, &err)) {
+		QMessageBox::warning(this, QString::fromUtf8(obs_module_text("TestDestination")), err);
+		return;
+	}
+	QMessageBox::information(this, QString::fromUtf8(obs_module_text("TestDestination")), summary);
 }

@@ -4,6 +4,8 @@
 #include <QStringList>
 #include <cstdint>
 
+#include "stream-destination.hpp"
+
 #ifdef VSP_SETTINGS_TEST
 /* Test build: avoid linking OBS */
 #else
@@ -80,6 +82,19 @@ struct PluginSettings {
 
 	QString recordingPath; /* empty => use OBS default when available */
 	bool clipBufferEnabled = true;
+
+	/* Clip buffer readiness / lifecycle */
+	bool autoStartClipBuffer = true;      /* start when dock ready / OBS loaded */
+	bool stopBufferWhenIdle = false;      /* optional idle stop */
+	int bufferIdleTimeoutSeconds = 300;   /* 5 minutes */
+	bool saveAvailableWhenShort = true;   /* offer partial save (UI default) */
+	bool bufferStartOnVerticalLive = true;
+	bool bufferStartOnVerticalRecord = true;
+
+	/* Vertical Streaming destination */
+	StreamDestMode streamDestMode = StreamDestMode::InheritMain;
+	QString verticalStreamServer; /* used when CustomServerAndKey */
+	QString verticalStreamKey;    /* used when SeparateKey or CustomServerAndKey */
 
 	/* Vertical Recording Automation (disabled by default) */
 	bool automationEnabled = false;
@@ -352,6 +367,16 @@ inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32
 
 	obs_data_set_string(data, "recording_path", s.recordingPath.toUtf8().constData());
 	obs_data_set_bool(data, "clip_buffer_enabled", s.clipBufferEnabled);
+	obs_data_set_bool(data, "auto_start_clip_buffer", s.autoStartClipBuffer);
+	obs_data_set_bool(data, "stop_buffer_when_idle", s.stopBufferWhenIdle);
+	obs_data_set_int(data, "buffer_idle_timeout_seconds", s.bufferIdleTimeoutSeconds);
+	obs_data_set_bool(data, "save_available_when_short", s.saveAvailableWhenShort);
+	obs_data_set_bool(data, "buffer_start_on_vertical_live", s.bufferStartOnVerticalLive);
+	obs_data_set_bool(data, "buffer_start_on_vertical_record", s.bufferStartOnVerticalRecord);
+
+	obs_data_set_int(data, "stream_dest_mode", static_cast<int>(s.streamDestMode));
+	obs_data_set_string(data, "vertical_stream_server", s.verticalStreamServer.toUtf8().constData());
+	obs_data_set_string(data, "vertical_stream_key", s.verticalStreamKey.toUtf8().constData());
 
 	obs_data_set_bool(data, "automation_enabled", s.automationEnabled);
 	obs_data_set_bool(data, "auto_start_main_stream", s.autoStartOnMainStream);
@@ -410,6 +435,24 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 	s.clipBufferEnabled = obs_data_has_user_value(data, "clip_buffer_enabled")
 				      ? obs_data_get_bool(data, "clip_buffer_enabled")
 				      : true;
+	s.autoStartClipBuffer = obs_data_has_user_value(data, "auto_start_clip_buffer")
+					? obs_data_get_bool(data, "auto_start_clip_buffer")
+					: true;
+	s.stopBufferWhenIdle = obs_data_get_bool(data, "stop_buffer_when_idle");
+	s.bufferIdleTimeoutSeconds = (int)obs_data_get_int(data, "buffer_idle_timeout_seconds");
+	s.saveAvailableWhenShort = obs_data_has_user_value(data, "save_available_when_short")
+					   ? obs_data_get_bool(data, "save_available_when_short")
+					   : true;
+	s.bufferStartOnVerticalLive = obs_data_has_user_value(data, "buffer_start_on_vertical_live")
+					      ? obs_data_get_bool(data, "buffer_start_on_vertical_live")
+					      : true;
+	s.bufferStartOnVerticalRecord = obs_data_has_user_value(data, "buffer_start_on_vertical_record")
+						? obs_data_get_bool(data, "buffer_start_on_vertical_record")
+						: true;
+
+	s.streamDestMode = static_cast<StreamDestMode>(obs_data_get_int(data, "stream_dest_mode"));
+	s.verticalStreamServer = QString::fromUtf8(obs_data_get_string(data, "vertical_stream_server"));
+	s.verticalStreamKey = QString::fromUtf8(obs_data_get_string(data, "vertical_stream_key"));
 
 	s.automationEnabled = obs_data_get_bool(data, "automation_enabled");
 	s.autoStartOnMainStream = obs_data_get_bool(data, "auto_start_main_stream");
@@ -455,6 +498,11 @@ inline PluginSettings LoadSettingsFromData(obs_data_t *data, uint32_t &canvasW, 
 		s.autoRecordDurationSeconds = 3600;
 	if (s.countdownSeconds <= 0)
 		s.countdownSeconds = 60;
+	if (s.bufferIdleTimeoutSeconds <= 0)
+		s.bufferIdleTimeoutSeconds = 300;
+	if (s.streamDestMode != StreamDestMode::InheritMain && s.streamDestMode != StreamDestMode::SeparateKey &&
+	    s.streamDestMode != StreamDestMode::CustomServerAndKey)
+		s.streamDestMode = StreamDestMode::InheritMain;
 
 	auto validShort = [](ShortClipPreset p) {
 		return p == ShortClipPreset::Custom || p == ShortClipPreset::Sec10 || p == ShortClipPreset::Sec20 ||

@@ -1,4 +1,5 @@
 #include "shorts-dock.hpp"
+#include "audio-mixer-panel.hpp"
 #include "display-helpers.hpp"
 #include "settings-dialog.hpp"
 
@@ -332,6 +333,7 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	connect(outputs.get(), &VerticalOutputs::streamingChanged, this, &ShortsDock::OnStreamingChanged);
 	connect(outputs.get(), &VerticalOutputs::recordingChanged, this, &ShortsDock::OnRecordingChanged);
 	connect(outputs.get(), &VerticalOutputs::clipSaved, this, &ShortsDock::OnClipSaved);
+	connect(outputs.get(), &VerticalOutputs::bufferStatusChanged, this, &ShortsDock::OnBufferStatus);
 	connect(automation.get(), &RecordingAutomation::statusChanged, this, &ShortsDock::OnAutomationStatus);
 	connect(automation.get(), &RecordingAutomation::notify, this, &ShortsDock::OnAutomationNotify);
 
@@ -352,12 +354,8 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	RefreshTransitions();
 	RefreshMixer();
 
-	QTimer::singleShot(1500, this, [this]() {
-		if (!outputs)
-			return;
-		QString err;
-		outputs->EnsureClipBuffer(&err);
-	});
+	/* Start clip buffer promptly when configured — no artificial multi-second delay. */
+	QTimer::singleShot(0, this, [this]() { EnsureBufferIfConfigured(); });
 }
 
 ShortsDock::~ShortsDock()
@@ -589,13 +587,14 @@ void ShortsDock::BuildUI()
 	auto *mixerScroll = new QScrollArea(right);
 	mixerScroll->setWidgetResizable(true);
 	mixerScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-	mixerHost = new QWidget(mixerScroll);
-	mixerLayout = new QVBoxLayout(mixerHost);
-	mixerLayout->setContentsMargins(2, 2, 2, 2);
-	mixerLayout->setSpacing(4);
-	mixerLayout->addStretch(1);
-	mixerScroll->setWidget(mixerHost);
+	mixerPanel = new AudioMixerPanel(mixerScroll);
+	mixerScroll->setWidget(mixerPanel);
 	rightLayout->addWidget(mixerScroll, 1);
+
+	bufferStatusLabel = new QLabel(Translate("BufferStopped"), right);
+	bufferStatusLabel->setWordWrap(true);
+	bufferStatusLabel->setStyleSheet(QStringLiteral("color: #bbb; font-size: 11px;"));
+	rightLayout->addWidget(bufferStatusLabel);
 
 	rightLayout->addWidget(new QLabel(Translate("Transitions"), right));
 	transitionCombo = new QComboBox(right);
@@ -1354,8 +1353,14 @@ void ShortsDock::HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind)
 	if (info.result == ClipSaveResult::Ok)
 		return;
 	if (info.result == ClipSaveResult::PartialAvailable) {
+		if (!settings.saveAvailableWhenShort) {
+			QMessageBox::warning(this, title, info.message);
+			return;
+		}
 		const auto reply = QMessageBox::question(
-			this, title, info.message + QStringLiteral("\n\n") + Translate("SaveAvailablePortion"),
+			this, title, info.message + QStringLiteral("
+
+") + Translate("SaveAvailablePortion"),
 			QMessageBox::Yes | QMessageBox::No);
 		if (reply == QMessageBox::Yes && outputs) {
 			const ClipSaveInfo again = outputs->SaveClipOfDuration(info.availableSeconds, kind, true);
@@ -1421,6 +1426,8 @@ void ShortsDock::OnSettings()
 			QString err;
 			outputs->EnsureClipBuffer(&err);
 		}
+	} else {
+		EnsureBufferIfConfigured();
 	}
 }
 
@@ -1557,72 +1564,24 @@ void ShortsDock::RefreshSourcesList()
 
 void ShortsDock::RefreshMixer()
 {
-	if (!mixerLayout || !mixerHost)
+	if (mixerPanel)
+		mixerPanel->Refresh();
+}
+
+void ShortsDock::EnsureBufferIfConfigured()
+{
+	if (!outputs || clearing || shuttingDown)
 		return;
+	if (!settings.clipBufferEnabled || !settings.autoStartClipBuffer)
+		return;
+	QString err;
+	outputs->EnsureClipBuffer(&err);
+}
 
-	QLayoutItem *child;
-	while ((child = mixerLayout->takeAt(0)) != nullptr) {
-		if (child->widget())
-			child->widget()->deleteLater();
-		delete child;
-	}
-
-	struct MixerEnum {
-		ShortsDock *dock;
-		QVBoxLayout *layout;
-	} ctx{this, mixerLayout};
-
-	obs_enum_sources(
-		[](void *param, obs_source_t *source) -> bool {
-			auto *c = static_cast<MixerEnum *>(param);
-			uint32_t flags = obs_source_get_output_flags(source);
-			if ((flags & OBS_SOURCE_AUDIO) == 0)
-				return true;
-
-			const QString name = QString::fromUtf8(obs_source_get_name(source));
-
-			auto *row = new QWidget(c->dock->mixerHost);
-			auto *hl = new QHBoxLayout(row);
-			hl->setContentsMargins(0, 0, 0, 0);
-
-			auto *label = new QLabel(name, row);
-			label->setMinimumWidth(72);
-
-			auto *mute = new QPushButton(
-				QString::fromUtf8(obs_source_muted(source) ? Translate("Unmute") : Translate("Mute")),
-				row);
-			mute->setCheckable(true);
-			mute->setChecked(obs_source_muted(source));
-
-			auto *slider = new QSlider(Qt::Horizontal, row);
-			slider->setRange(0, 100);
-			slider->setValue((int)std::lround(obs_source_get_volume(source) * 100.0f));
-
-			QObject::connect(mute, &QPushButton::toggled, c->dock, [name, mute](bool checked) {
-				obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
-				if (!src)
-					return;
-				obs_source_set_muted(src, checked);
-				mute->setText(QString::fromUtf8(checked ? Translate("Unmute") : Translate("Mute")));
-				obs_source_release(src);
-			});
-			QObject::connect(slider, &QSlider::valueChanged, c->dock, [name](int value) {
-				obs_source_t *src = obs_get_source_by_name(name.toUtf8().constData());
-				if (!src)
-					return;
-				obs_source_set_volume(src, (float)value / 100.0f);
-				obs_source_release(src);
-			});
-
-			hl->addWidget(label);
-			hl->addWidget(mute);
-			hl->addWidget(slider, 1);
-			c->layout->addWidget(row);
-			return true;
-		},
-		&ctx);
-
-	mixerLayout->addStretch(1);
+void ShortsDock::OnBufferStatus(BufferStatus, const QString &text)
+{
+	if (bufferStatusLabel)
+		bufferStatusLabel->setText(text);
 }
 
 void ShortsDock::RefreshTransitions()
@@ -1796,6 +1755,7 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 		QMetaObject::invokeMethod(dock, [dock]() {
 			if (dock->automation)
 				dock->automation->OnObsFinishedLoading();
+			dock->EnsureBufferIfConfigured();
 		}, Qt::QueuedConnection);
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:

@@ -70,6 +70,12 @@ int main()
 	       "short and long durations independent");
 
 	expect(!s.automationEnabled, "automation disabled by default");
+	expect(s.autoStartClipBuffer, "auto start buffer default on");
+	expect(s.streamDestMode == vsp::StreamDestMode::InheritMain, "inherit main stream dest by default");
+
+	QString pathErr;
+	/* recording path validation helper coverage via DefaultRecordingPath emptiness in test mode */
+	expect(vsp::DefaultRecordingPath().isEmpty(), "test build has empty default path");
 
 	if (failures) {
 		std::cerr << failures << " test(s) failed\n";

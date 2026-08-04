@@ -1,6 +1,6 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.2.0** — Windows
+**Version 1.3.0** — Windows
 
 Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTok, Reels, and Twitch vertical.
 
@@ -14,16 +14,19 @@ Vertical production dock for [OBS Studio](https://obsproject.com): Shorts, TikTo
 Dock title: **Vertical Shorts**
 
 - Vertical-only workspace (main OBS remains the horizontal production canvas)
-- OBS-style panels: Scenes, Sources, Audio Mixer, Transitions
+- OBS-style panels: Scenes, Sources, Audio Mixer (real meters), Transitions
 - Canvas controls (bottom-right): 🟢 Go Live · ⏺️ Record · 📸 Short Clip · 📷 Long Clip · ⚙️ Settings
-- Vertical transforms are stored on private mirror scenes so your main horizontal layout is not overwritten
-- Short/long clip buffer, Vertical Recording Automation, and optional OBS hotkeys
+- Vertical transforms are stored on private mirror scenes so your main OBS canvas is not overwritten
+- Separate vertical stream destination options, clip-buffer readiness status, automation, and hotkeys
 
-## Install
+## Install / test
 
-1. Close OBS Studio  
-2. Run Setup.exe **or** copy `obs-shorts-vertical` into `%APPDATA%\obs-studio\plugins`  
-3. Start OBS → **View → Docks → Vertical Shorts**
+1. Install the current Setup.exe or zip release.
+2. Open OBS.
+3. Go to **View → Docks → Vertical Shorts**.
+4. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.
+5. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+6. Confirm output files save to the selected vertical recording path.
 
 ## Requirements
 
@@ -33,12 +36,17 @@ Dock title: **Vertical Shorts**
 ## Build
 
 ```bash
-# Windows (VS 2022) — see .github/workflows/build-windows.yaml
-cmake --preset windows-x64
-cmake --build --preset windows-x64-release
+# Windows (VS 2022)
+cmake --preset windows-release
+cmake --build --preset windows-release
+
+# Unit tests
+cmake --preset windows-tests
+cmake --build --preset windows-tests
+ctest --preset windows-tests
 ```
 
-Optional settings tests: configure with `-DVSP_BUILD_TESTS=ON`.
+CI configures tests automatically and runs `ctest --output-on-failure` before packaging. Test binaries are not included in the release zip/Setup.exe.
 
 ## License
 

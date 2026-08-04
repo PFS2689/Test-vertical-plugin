@@ -119,10 +119,18 @@ EncoderPair MakeEncoders(video_t *video, bool forStreaming, QString *encoderName
 
 } // namespace
 
-VerticalOutputs::VerticalOutputs(QObject *parent) : QObject(parent) {}
+VerticalOutputs::VerticalOutputs(QObject *parent) : QObject(parent)
+{
+	statusTimer.setInterval(500);
+	connect(&statusTimer, &QTimer::timeout, this, &VerticalOutputs::OnBufferStatusTick);
+	idleTimer.setSingleShot(true);
+	connect(&idleTimer, &QTimer::timeout, this, &VerticalOutputs::OnIdleTimeout);
+}
 
 VerticalOutputs::~VerticalOutputs()
 {
+	statusTimer.stop();
+	idleTimer.stop();
 	StopAll();
 }
 
@@ -152,6 +160,12 @@ void VerticalOutputs::ApplySettings(const vsp::PluginSettings &s, bool *bufferRe
 		obs_data_set_int(data, "max_time_sec", configuredBufferSeconds);
 		obs_data_set_int(data, "max_size_mb", 0);
 		obs_output_update(replayOutput, data);
+	}
+
+	if (settings.stopBufferWhenIdle && IsClipBufferActive()) {
+		idleTimer.start(settings.bufferIdleTimeoutSeconds * 1000);
+	} else {
+		idleTimer.stop();
 	}
 }
 
@@ -201,6 +215,134 @@ QString VerticalOutputs::RecordingStatusSummary() const
 	if (IsRecording())
 		return QStringLiteral("Recording — %1").arg(lastRecordingPath);
 	return QStringLiteral("Idle");
+}
+
+QString VerticalOutputs::StreamDestinationSummary() const
+{
+	return QStringLiteral("Using: %1").arg(vsp::DestinationModeLabel(settings.streamDestMode));
+}
+
+bool VerticalOutputs::WouldConflictWithMainStream(QString *detail) const
+{
+	if (!vsp::MainStreamingActive())
+		return false;
+
+	const vsp::StreamDestination main = vsp::MainStreamingDestination();
+	vsp::StreamDestination vertical = main;
+
+	if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey) {
+		if (settings.verticalStreamKey.trimmed().isEmpty()) {
+			if (detail)
+				*detail = QStringLiteral("Separate vertical stream key is not configured.");
+			return true; /* would reuse main key */
+		}
+		vertical.streamKey = settings.verticalStreamKey.trimmed();
+	} else if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
+		vertical.server = settings.verticalStreamServer.trimmed();
+		vertical.streamKey = settings.verticalStreamKey.trimmed();
+		vertical.serviceType = QStringLiteral("rtmp_custom");
+	}
+
+	if (vsp::DestinationsConflict(main, vertical)) {
+		if (detail) {
+			*detail = QStringLiteral(
+					  "Main OBS stream is active to the same destination "
+					  "(server %1, key %2).")
+					  .arg(vsp::SanitizeUrlForLog(main.server), vsp::MaskSecret(main.streamKey));
+		}
+		return true;
+	}
+	return false;
+}
+
+bool VerticalOutputs::TestStreamDestination(QString *summary, QString *error) const
+{
+	QString conflict;
+	if (WouldConflictWithMainStream(&conflict)) {
+		if (error)
+			*error = vsp::ConflictUserMessage() + QStringLiteral("\n\n") + conflict;
+		return false;
+	}
+
+	obs_service_t *service = CreateVerticalService(error);
+	if (!service)
+		return false;
+
+	const vsp::StreamDestination d = vsp::DestinationFromService(service);
+	obs_service_release(service);
+
+	if (d.streamKey.isEmpty() && settings.streamDestMode != vsp::StreamDestMode::InheritMain) {
+		if (error)
+			*error = QStringLiteral("Vertical stream key is empty.");
+		return false;
+	}
+
+	if (summary) {
+		*summary = QStringLiteral(
+				   "Destination OK\nMode: %1\nService: %2\nServer: %3\nKey: %4\nProtocol: %5")
+				   .arg(vsp::DestinationModeLabel(settings.streamDestMode),
+					d.serviceName.isEmpty() ? d.serviceType : d.serviceName,
+					vsp::SanitizeUrlForLog(d.server), vsp::MaskSecret(d.streamKey),
+					d.protocol.isEmpty() ? QStringLiteral("(unknown)") : d.protocol);
+	}
+	blog(LOG_INFO, "[obs-shorts-vertical] Test destination OK mode=%d server=%s key=%s",
+	     (int)settings.streamDestMode, vsp::SanitizeUrlForLog(d.server).toUtf8().constData(),
+	     vsp::MaskSecret(d.streamKey).toUtf8().constData());
+	return true;
+}
+
+obs_service_t *VerticalOutputs::CreateVerticalService(QString *error) const
+{
+	obs_service_t *main = obs_frontend_get_streaming_service();
+	if (!main) {
+		if (error)
+			*error = QStringLiteral("No streaming service is configured in OBS Settings → Stream.");
+		return nullptr;
+	}
+
+	if (settings.streamDestMode == vsp::StreamDestMode::InheritMain)
+		return main; /* caller releases */
+
+	OBSDataAutoRelease base = obs_service_get_settings(main);
+	OBSDataAutoRelease settingsData = obs_data_create();
+	if (base)
+		obs_data_apply(settingsData, base);
+
+	const char *typeId = obs_service_get_type(main);
+	QString type = typeId ? QString::fromUtf8(typeId) : QStringLiteral("rtmp_custom");
+
+	if (settings.streamDestMode == vsp::StreamDestMode::SeparateKey) {
+		const QString key = settings.verticalStreamKey.trimmed();
+		if (key.isEmpty()) {
+			obs_service_release(main);
+			if (error)
+				*error = QStringLiteral("Configure a separate vertical stream key in Settings.");
+			return nullptr;
+		}
+		obs_data_set_string(settingsData, "key", key.toUtf8().constData());
+	} else if (settings.streamDestMode == vsp::StreamDestMode::CustomServerAndKey) {
+		type = QStringLiteral("rtmp_custom");
+		const QString server = settings.verticalStreamServer.trimmed();
+		const QString key = settings.verticalStreamKey.trimmed();
+		if (server.isEmpty() || key.isEmpty()) {
+			obs_service_release(main);
+			if (error)
+				*error = QStringLiteral("Custom vertical server and stream key are required.");
+			return nullptr;
+		}
+		obs_data_set_string(settingsData, "server", server.toUtf8().constData());
+		obs_data_set_string(settingsData, "key", key.toUtf8().constData());
+	}
+
+	obs_service_release(main);
+
+	obs_service_t *svc =
+		obs_service_create(type.toUtf8().constData(), "vertical_shorts_service", settingsData, nullptr);
+	if (!svc)
+		svc = obs_service_create("rtmp_custom", "vertical_shorts_service", settingsData, nullptr);
+	if (!svc && error)
+		*error = QStringLiteral("Could not create a vertical streaming service.");
+	return svc;
 }
 
 bool VerticalOutputs::PathWritable(QString *error) const
@@ -262,16 +404,37 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	if (IsStreaming())
 		return true;
 
-	obs_service_t *service = obs_frontend_get_streaming_service();
-	if (!service) {
+	QString conflictDetail;
+	if (WouldConflictWithMainStream(&conflictDetail)) {
 		if (error)
-			*error = QStringLiteral("No streaming service is configured in OBS Settings → Stream.");
+			*error = vsp::ConflictUserMessage() + QStringLiteral("\n\n") + conflictDetail;
+		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream blocked: duplicate destination (%s)",
+		     conflictDetail.toUtf8().constData());
 		return false;
 	}
 
+	if (ownedStreamService) {
+		obs_service_release(ownedStreamService);
+		ownedStreamService = nullptr;
+	}
+
+	obs_service_t *service = CreateVerticalService(error);
+	if (!service)
+		return false;
+
+	/* Track privately created services for release; frontend service also needs release. */
+	const bool inherited = settings.streamDestMode == vsp::StreamDestMode::InheritMain;
+	if (!inherited)
+		ownedStreamService = service;
+
 	EncoderPair pair = MakeEncoders(video, true, &lastEncoderName, &lastVideoBitrate, &lastAudioBitrate, error);
 	if (!pair.video || !pair.audio) {
-		obs_service_release(service);
+		if (inherited)
+			obs_service_release(service);
+		else {
+			obs_service_release(ownedStreamService);
+			ownedStreamService = nullptr;
+		}
 		ReleasePair(pair);
 		return false;
 	}
@@ -287,14 +450,21 @@ bool VerticalOutputs::StartStreaming(QString *error)
 	}
 	if (!streamOutput) {
 		ReleasePair(pair);
-		obs_service_release(service);
+		if (inherited)
+			obs_service_release(service);
+		else {
+			obs_service_release(ownedStreamService);
+			ownedStreamService = nullptr;
+		}
 		if (error)
 			*error = QStringLiteral("Could not create a vertical streaming output.");
 		return false;
 	}
 
 	obs_output_set_service(streamOutput, service);
-	obs_service_release(service);
+	if (inherited)
+		obs_service_release(service);
+
 	obs_output_set_media(streamOutput, video, obs_get_audio());
 	obs_output_set_video_encoder(streamOutput, pair.video);
 	obs_output_set_audio_encoder(streamOutput, pair.audio, 0);
@@ -305,13 +475,17 @@ bool VerticalOutputs::StartStreaming(QString *error)
 		if (error)
 			*error = err && *err
 					 ? QString::fromUtf8(err)
-					 : QStringLiteral(
-						   "Failed to start vertical stream. The service may already be in use by the main OBS stream.");
+					 : QStringLiteral("Failed to start vertical stream.");
+		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical stream start failed (key masked in diagnostics)");
 		return false;
 	}
 
 	emit streamingChanged(true);
-	blog(LOG_INFO, "[obs-shorts-vertical] Vertical stream started");
+	if (settings.bufferStartOnVerticalLive)
+		EnsureClipBuffer(nullptr);
+	NoteUserActivity();
+	blog(LOG_INFO, "[obs-shorts-vertical] Vertical stream started (%s)",
+	     vsp::DestinationModeLabel(settings.streamDestMode).toUtf8().constData());
 	return true;
 }
 
@@ -375,6 +549,9 @@ bool VerticalOutputs::StartRecording(QString *error)
 	lastRecordingPath = path;
 	emit recordingChanged(true);
 	emit recordingStarted(path);
+	if (settings.bufferStartOnVerticalRecord)
+		EnsureClipBuffer(nullptr);
+	NoteUserActivity();
 	blog(LOG_INFO, "[obs-shorts-vertical] Vertical recording started: %s", path.toUtf8().constData());
 	return true;
 }
@@ -408,27 +585,122 @@ int VerticalOutputs::BufferedSecondsAvailable() const
 	return elapsed >= cap ? cap : static_cast<int>(elapsed);
 }
 
+BufferStatus VerticalOutputs::GetBufferStatus() const
+{
+	return bufferStatus;
+}
+
+QString VerticalOutputs::BufferStatusText() const
+{
+	const int avail = BufferedSecondsAvailable();
+	const int shortNeed = vsp::EffectiveShortClipSeconds(settings);
+	const int longNeed = vsp::EffectiveLongClipSeconds(settings);
+	QString text = BufferStatusLabel(bufferStatus);
+	if (bufferStatus == BufferStatus::Error && !lastBufferError.isEmpty())
+		text += QStringLiteral(" — %1").arg(lastBufferError);
+	else if (bufferStatus != BufferStatus::Stopped)
+		text += QStringLiteral(" — available %1s (short %2s / long %3s)")
+				.arg(avail)
+				.arg(shortNeed)
+				.arg(longNeed);
+	return text;
+}
+
+void VerticalOutputs::EmitBufferStatus()
+{
+	emit bufferStatusChanged(bufferStatus, BufferStatusText());
+}
+
+void VerticalOutputs::UpdateBufferStatus(bool emitSignal)
+{
+	BufferStatus next = BufferStatus::Stopped;
+	if (!settings.clipBufferEnabled) {
+		next = BufferStatus::Stopped;
+	} else if (bufferStatus == BufferStatus::Error && !IsClipBufferActive()) {
+		next = BufferStatus::Error;
+	} else if (!IsClipBufferActive()) {
+		next = (bufferStatus == BufferStatus::Starting) ? BufferStatus::Starting : BufferStatus::Stopped;
+	} else {
+		const int avail = BufferedSecondsAvailable();
+		const int shortNeed = vsp::EffectiveShortClipSeconds(settings);
+		const int longNeed = vsp::EffectiveLongClipSeconds(settings);
+		if (avail >= longNeed)
+			next = BufferStatus::ReadyLong;
+		else if (avail >= shortNeed)
+			next = BufferStatus::ReadyShort;
+		else if (avail > 0)
+			next = BufferStatus::Buffering;
+		else
+			next = BufferStatus::Starting;
+	}
+
+	if (next != bufferStatus || emitSignal) {
+		bufferStatus = next;
+		if (emitSignal)
+			EmitBufferStatus();
+	}
+}
+
+void VerticalOutputs::OnBufferStatusTick()
+{
+	UpdateBufferStatus(true);
+}
+
+void VerticalOutputs::OnIdleTimeout()
+{
+	if (!settings.stopBufferWhenIdle)
+		return;
+	if (IsStreaming() || IsRecording())
+		return;
+	blog(LOG_INFO, "[obs-shorts-vertical] Stopping idle clip buffer");
+	StopClipBuffer();
+}
+
+void VerticalOutputs::NoteUserActivity()
+{
+	if (settings.stopBufferWhenIdle && IsClipBufferActive())
+		idleTimer.start(settings.bufferIdleTimeoutSeconds * 1000);
+}
+
 bool VerticalOutputs::EnsureClipBuffer(QString *error)
 {
 	if (!settings.clipBufferEnabled) {
 		if (error)
 			*error = QStringLiteral("Clip buffer is disabled in Settings.");
+		bufferStatus = BufferStatus::Stopped;
+		EmitBufferStatus();
 		return false;
 	}
 	if (!video) {
 		if (error)
 			*error = QStringLiteral("Vertical video pipeline is not ready.");
+		lastBufferError = error ? *error : QString();
+		bufferStatus = BufferStatus::Error;
+		EmitBufferStatus();
 		return false;
 	}
-	if (IsClipBufferActive())
+	if (IsClipBufferActive()) {
+		NoteUserActivity();
+		UpdateBufferStatus(true);
 		return true;
+	}
 
-	if (!PathWritable(error))
+	if (!PathWritable(error)) {
+		lastBufferError = error ? *error : QString();
+		bufferStatus = BufferStatus::Error;
+		EmitBufferStatus();
 		return false;
+	}
+
+	bufferStatus = BufferStatus::Starting;
+	EmitBufferStatus();
 
 	EncoderPair pair = MakeEncoders(video, false, &lastEncoderName, &lastVideoBitrate, &lastAudioBitrate, error);
 	if (!pair.video || !pair.audio) {
 		ReleasePair(pair);
+		lastBufferError = error ? *error : QStringLiteral("Encoder unavailable");
+		bufferStatus = BufferStatus::Error;
+		EmitBufferStatus();
 		return false;
 	}
 
@@ -443,6 +715,9 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 		ReleasePair(pair);
 		if (error)
 			*error = QStringLiteral("Could not create a vertical clip buffer (replay_buffer unavailable).");
+		lastBufferError = *error;
+		bufferStatus = BufferStatus::Error;
+		EmitBufferStatus();
 		return false;
 	}
 
@@ -467,11 +742,19 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 		if (error)
 			*error = err && *err ? QString::fromUtf8(err)
 					     : QStringLiteral("Failed to start the vertical clip buffer.");
+		lastBufferError = *error;
+		bufferStatus = BufferStatus::Error;
+		EmitBufferStatus();
 		return false;
 	}
 
 	clipBufferStartedAt = QDateTime::currentDateTime();
+	lastBufferError.clear();
 	emit clipBufferChanged(true);
+	if (!statusTimer.isActive())
+		statusTimer.start();
+	NoteUserActivity();
+	UpdateBufferStatus(true);
 	blog(LOG_INFO, "[obs-shorts-vertical] Vertical clip buffer started (%d sec capacity)",
 	     configuredBufferSeconds);
 	return true;
@@ -479,10 +762,14 @@ bool VerticalOutputs::EnsureClipBuffer(QString *error)
 
 void VerticalOutputs::StopClipBuffer()
 {
+	statusTimer.stop();
+	idleTimer.stop();
 	if (replayOutput && obs_output_active(replayOutput))
 		obs_output_stop(replayOutput);
 	clipBufferStartedAt = QDateTime();
+	bufferStatus = BufferStatus::Stopped;
 	emit clipBufferChanged(false);
+	EmitBufferStatus();
 }
 
 bool VerticalOutputs::IsClipBufferActive() const
@@ -510,6 +797,7 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 	ClipSaveInfo info;
 	info.requestedSeconds = seconds;
 	info.result = ClipSaveResult::Error;
+	NoteUserActivity();
 
 	if (seconds < 1) {
 		info.message = QStringLiteral("Requested clip duration is invalid.");
@@ -528,6 +816,7 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 			"The vertical clip buffer just started.\n\n"
 			"Requested: %1 seconds\n"
 			"Available: 0 seconds\n\n"
+			"Footage can only accumulate after the buffer starts. "
 			"Allow the buffer to run longer, then try again.")
 					   .arg(seconds);
 		return info;
@@ -540,6 +829,7 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 			"Not enough footage is buffered yet.\n\n"
 			"Requested: %1 seconds\n"
 			"Available: %2 seconds\n\n"
+			"The buffer only retains footage captured after it started. "
 			"%3")
 					   .arg(seconds)
 					   .arg(info.availableSeconds)
@@ -560,7 +850,6 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 	pendingClipKind = kind;
 	pendingClipSeconds = seconds;
 
-	/* Update format hint before save so filenames include type when possible */
 	const char *typeName = kind == ClipKind::Long ? "LongClip" : "ShortClip";
 	OBSDataAutoRelease data = obs_data_create();
 	obs_data_set_string(data, "directory", ResolveRecordingDirectory().toUtf8().constData());
@@ -584,6 +873,7 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 		return info;
 	}
 
+	/* Keep buffer running — do not tear down after save */
 	info.result = ClipSaveResult::Ok;
 	info.message = QStringLiteral("Saving %1 clip (%2 s)…").arg(QString::fromUtf8(typeName)).arg(seconds);
 	return info;
@@ -591,6 +881,8 @@ ClipSaveInfo VerticalOutputs::SaveClipInternal(int seconds, ClipKind kind, bool 
 
 void VerticalOutputs::StopAll()
 {
+	statusTimer.stop();
+	idleTimer.stop();
 	StopStreaming();
 	StopRecording();
 	StopClipBuffer();
@@ -606,6 +898,10 @@ void VerticalOutputs::StopAll()
 	if (replayOutput) {
 		obs_output_release(replayOutput);
 		replayOutput = nullptr;
+	}
+	if (ownedStreamService) {
+		obs_service_release(ownedStreamService);
+		ownedStreamService = nullptr;
 	}
 }
 
@@ -640,6 +936,7 @@ void VerticalOutputs::OnReplaySaved(void *data, calldata_t *cd)
 				self->lastClipPath = qpath;
 				emit self->clipSaved(qpath, kind);
 			}
+			self->NoteUserActivity();
 		},
 		Qt::QueuedConnection);
 }

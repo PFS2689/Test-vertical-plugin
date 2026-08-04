@@ -3,6 +3,7 @@
 #include "plugin-settings.hpp"
 #include "qt-display.hpp"
 #include "recording-automation.hpp"
+#include "audio-mixer-panel.hpp"
 #include "vertical-outputs.hpp"
 
 #include <graphics/matrix4.h>
@@ -116,6 +117,8 @@ private slots:
 	void SyncActiveSceneFromFrontend();
 	void OnAutomationStatus(vsp::AutomationStatus status, const QString &text);
 	void OnAutomationNotify(const QString &title, const QString &message);
+	void OnBufferStatus(BufferStatus status, const QString &text);
+	void EnsureBufferIfConfigured();
 
 private:
 	void BuildUI();
@@ -170,10 +173,10 @@ private:
 
 	QListWidget *scenesList = nullptr;
 	QListWidget *sourcesList = nullptr;
-	QWidget *mixerHost = nullptr;
-	QVBoxLayout *mixerLayout = nullptr;
+	AudioMixerPanel *mixerPanel = nullptr;
 	QComboBox *transitionCombo = nullptr;
 	QSpinBox *transitionDuration = nullptr;
+	QLabel *bufferStatusLabel = nullptr;
 
 	QDoubleSpinBox *posXSpin = nullptr;
 	QDoubleSpinBox *posYSpin = nullptr;

@@ -32,6 +32,8 @@ private slots:
 	void OnBrowsePath();
 	void OnResetDefaults();
 	void OnResetAutomation();
+	void OnStreamDestModeChanged(int index);
+	void OnTestDestination();
 	void OnAccepted();
 
 private:
@@ -74,6 +76,20 @@ private:
 	QSpinBox *longCustomSec = nullptr;
 	QLabel *longWarnLabel = nullptr;
 	QCheckBox *clipBufferCheck = nullptr;
+	QCheckBox *autoStartBufferCheck = nullptr;
+	QCheckBox *stopIdleCheck = nullptr;
+	QSpinBox *idleTimeoutSpin = nullptr;
+	QCheckBox *saveAvailableCheck = nullptr;
+	QCheckBox *bufferOnLiveCheck = nullptr;
+	QCheckBox *bufferOnRecordCheck = nullptr;
+	QLabel *bufferStatusInSettings = nullptr;
+
+	/* Streaming destination */
+	QComboBox *streamDestMode = nullptr;
+	QLineEdit *verticalServerEdit = nullptr;
+	QLineEdit *verticalKeyEdit = nullptr;
+	QLabel *streamDestSummary = nullptr;
+	QPushButton *testDestBtn = nullptr;
 
 	/* Automation */
 	QCheckBox *autoMaster = nullptr;

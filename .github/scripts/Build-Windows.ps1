@@ -73,11 +73,25 @@ function Build {
     Log-Group "Configuring ${ProductName}..."
     Invoke-External cmake @CmakeArgs
 
+    Log-Group "Building unit tests..."
+    Invoke-External cmake --build --preset "windows-${Target}" --config $Configuration --parallel --target test_settings --target test_stream_destination --target test_mixer_model -- /consoleLoggerParameters:Summary /noLogo
+
+    Log-Group "Running ctest..."
+    Push-Location "build_${Target}"
+    Invoke-External ctest -C $Configuration --output-on-failure --timeout 120
+    Pop-Location
+
     Log-Group "Building ${ProductName}..."
     Invoke-External cmake @CmakeBuildArgs
 
     Log-Group "Installing ${ProductName}..."
     Invoke-External cmake @CmakeInstallArgs
+
+    # Guard: test binaries must never land in the plugin package tree
+    $TestLeak = Get-ChildItem -Path "${ProjectRoot}/release" -Recurse -Filter "test_*" -ErrorAction SilentlyContinue
+    if ($TestLeak) {
+        throw "Test binaries leaked into release tree: $($TestLeak.FullName -join ', ')"
+    }
 
     Pop-Location -Stack BuildTemp
     Log-Group
