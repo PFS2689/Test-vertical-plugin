@@ -1,0 +1,184 @@
+name: Release Windows
+run-name: Windows release ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build-windows.yaml
+    secrets: inherit
+
+  release:
+    name: Publish Windows Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate tag
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s extglob
+          case "${GITHUB_REF_NAME}" in
+            +([0-9]).+([0-9]).+([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+            +([0-9]).+([0-9]).+([0-9])-@(beta|rc)*([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "valid=false" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        if: steps.check.outputs.valid == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Prepare release assets
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          # Stable names for end users
+          if [[ -f dist/Vertical-Shorts-Plugin.zip ]]; then
+            cp dist/Vertical-Shorts-Plugin.zip release-assets/
+          fi
+          if [[ -f dist/Vertical-Shorts-Plugin-Setup.exe ]]; then
+            cp dist/Vertical-Shorts-Plugin-Setup.exe release-assets/
+          fi
+          # Versioned zip for archival
+          if ls dist/Vertical-Shorts-Plugin-*.zip >/dev/null 2>&1; then
+            cp dist/Vertical-Shorts-Plugin-*.zip release-assets/ 2>/dev/null || true
+          fi
+          if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
+            cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
+          fi
+
+          test -f release-assets/Vertical-Shorts-Plugin.zip
+          test -f release-assets/Vertical-Shorts-Plugin-Setup.exe
+
+          # Zip must only contain expected OBS plugin files (no nested exe/scripts)
+          mkdir -p /tmp/pkgcheck
+          unzip -l release-assets/Vertical-Shorts-Plugin.zip
+          unzip -q release-assets/Vertical-Shorts-Plugin.zip -d /tmp/pkgcheck
+          if find /tmp/pkgcheck -type f \( -iname '*.exe' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.vbs' -o -iname '*.js' \) | grep -q .; then
+            echo "ERROR: unexpected script/executable in zip" >&2
+            find /tmp/pkgcheck -type f
+            exit 1
+          fi
+          test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
+
+          # Setup.exe must be a PE binary, not an Inno Setup stub, and a reasonable size
+          file release-assets/Vertical-Shorts-Plugin-Setup.exe | tee /tmp/setup-file.txt
+          grep -qiE 'PE32|executable|MS Windows' /tmp/setup-file.txt
+          if strings release-assets/Vertical-Shorts-Plugin-Setup.exe | grep -qi 'Inno Setup Setup Data'; then
+            echo "ERROR: Setup.exe still looks like an Inno Setup installer" >&2
+            exit 1
+          fi
+          size=$(stat -c%s release-assets/Vertical-Shorts-Plugin-Setup.exe)
+          # Custom MSVC installer embeds the DLL (~100KB+) plus a small stub
+          if [[ "$size" -lt 40000 || "$size" -gt 5000000 ]]; then
+            echo "ERROR: Setup.exe size looks wrong: $size bytes" >&2
+            exit 1
+          fi
+
+          ls -la release-assets
+
+      - name: ClamAV malware scan
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo freshclam || sudo freshclam --stdout || true
+          echo "Scanning release assets with ClamAV (zip + Setup.exe)..."
+          set +e
+          clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          # clamscan: 0 = clean, 1 = infected, 2+ = error
+          if [[ "$status" -eq 1 ]]; then
+            echo "ERROR: ClamAV found malware — aborting release" >&2
+            exit 1
+          elif [[ "$status" -ge 2 ]]; then
+            echo "ERROR: ClamAV scan failed (exit $status)" >&2
+            exit 1
+          fi
+          echo "CLAMAV_CLEAN=true" >> "$GITHUB_ENV"
+          echo "ClamAV: CLEAN"
+
+      - name: Write release notes
+        if: steps.check.outputs.valid == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
+            echo
+            echo "Open-source OBS plugin. Both downloads are built in GitHub Actions and **ClamAV-scanned before publish**."
+            echo
+            echo "### Download"
+            echo
+            echo "- **Setup.exe (recommended):** [Vertical-Shorts-Plugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe)"
+            echo "- **Manual ZIP:** [Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)"
+            echo
+            echo "### Install (Setup.exe)"
+            echo "1. Close OBS Studio"
+            echo "2. Run \`Vertical-Shorts-Plugin-Setup.exe\`"
+            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Install (zip)"
+            echo "1. Close OBS"
+            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
+            echo "4. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Safety analysis"
+            echo "- **ClamAV malware scan: CLEAN** (zip and Setup.exe; release is blocked if anything is flagged)"
+            echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
+            echo "- It only copies the plugin into \`%APPDATA%\\obs-studio\\plugins\` (per-user, no Administrator rights)"
+            echo "- No downloads, no Run-key changes, no bundled third-party stub"
+            echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
+            echo "- Source code: https://github.com/${{ github.repository }}"
+            echo
+            echo "### Windows SmartScreen note"
+            echo "Because this open-source build is **not Authenticode-signed**, Windows may show **\"Windows protected your PC\" / Unknown publisher**."
+            echo "That is a reputation warning for new unsigned software — **not** a confirmed malware detection."
+            echo "Click **More info → Run anyway** if you trust this GitHub release."
+            echo "Do **not** disable Windows Defender. You can [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission) if needed."
+            echo
+            echo "### Checksums (SHA-256)"
+            for f in release-assets/*; do
+              echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
+            done
+          } > RELEASE_BODY.md
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.valid == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check.outputs.version }}
+          name: Vertical Shorts Plugin ${{ steps.check.outputs.version }}
+          body_path: RELEASE_BODY.md
+          draft: false
+          prerelease: ${{ steps.check.outputs.prerelease == 'true' }}
+          files: release-assets/*
+          fail_on_unmatched_files: true
