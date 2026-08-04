@@ -81,7 +81,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 **Honesty statement:** This audit **cannot** claim the project is “virus-free.” Unsigned Setup.exe that embeds a PE as RCDATA can still receive Defender ML / SmartScreen reputation detections. Those must be investigated per-file if reported — never suppressed.
 
 ### Suspected false-positive profile (document, do not ignore)
-- **File:** `Vertical-Shorts-Plugin-Setup.exe`
+- **File:** `Vertical Shorts Plugin 1.0.5 Setup.exe`
 - **Likely cause:** Small custom installer extracting embedded DLL (RCDATA) — common ML heuristic; not Inno/NSIS
 - **Mitigation:** Authenticode signing; keep payload minimal; submit to Microsoft WDSI if FP confirmed after signing
 
@@ -127,7 +127,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 
 ## 9. Recommendations before public release
 
-1. **Configure Authenticode** (Azure Trusted Signing or EV cert) for `obs-shorts-vertical.dll` and `Vertical-Shorts-Plugin-Setup.exe`; re-scan with Defender after signing.  
+1. **Configure Authenticode** (Azure Trusted Signing or EV cert) for `obs-shorts-vertical.dll` and `Vertical Shorts Plugin 1.0.5 Setup.exe`; re-scan with Defender after signing.  
 2. On a Windows release host, run:  
    `MpCmdRun.exe -Scan -ScanType 3 -File <artifact>`  
    and keep the log; do **not** add exclusions.  
