@@ -230,11 +230,18 @@ jobs:
             echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
             echo "- Source code: https://github.com/${{ github.repository }}"
             echo
+            echo "### Authenticode"
+            echo "Setup.exe and the embedded plugin DLL are **Authenticode-signed** in CI (Azure Artifact Signing or OV/EV PFX) with an RFC3161 timestamp."
+            echo "You can verify in PowerShell:"
+            echo
+            echo '```powershell'
+            echo "Get-AuthenticodeSignature '.\\${SETUP_NAME}'"
+            echo '```'
+            echo
             echo "### Windows SmartScreen note"
-            echo "Because this open-source build is **not Authenticode-signed**, Windows may show **\"Windows protected your PC\" / Unknown publisher**."
-            echo "That is a reputation warning for new unsigned software — **not** a confirmed malware detection."
-            echo "Click **More info → Run anyway** if you trust this GitHub release."
-            echo "Do **not** disable Windows Defender. You can [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission) if needed."
+            echo "After Authenticode signing, SmartScreen may still show a first-run reputation warning for brand-new releases until download reputation builds."
+            echo "That is **not** a malware detection. Prefer verifying the Authenticode signature and SHA-256 checksums below."
+            echo "Do **not** disable Windows Defender."
             echo
             echo "### Checksums (SHA-256)"
             echo
@@ -245,10 +252,6 @@ jobs:
               name="${line#*  }"
               echo "- \`$name\`: \`$hash\`"
             done < release-assets/SHA256SUMS.txt
-            echo
-            echo "### Signing"
-            echo "Authenticode code signing is **not yet configured** for this open-source project."
-            echo "Until signing is available, verify SHA-256 checksums against this release note / \`SHA256SUMS.txt\`."
           } > RELEASE_BODY.md
           cat RELEASE_BODY.md
 

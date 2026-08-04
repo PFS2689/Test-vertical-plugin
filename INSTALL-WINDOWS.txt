@@ -20,9 +20,14 @@ This is a small custom MSVC installer (not Inno Setup). It only copies the
 plugin files into your user OBS plugins folder. It does not download anything,
 does not need Administrator rights, and does not change browser/startup settings.
 
-If SmartScreen says "Unknown publisher":
-  More info → Run anyway
-  (Unsigned open-source software; not the same as a malware detection.)
+Authenticode:
+  Production releases are Authenticode-signed. Verify with:
+    Get-AuthenticodeSignature "Vertical-Shorts-Plugin-1.0.5-Setup.exe"
+  Status should be Valid.
+
+If SmartScreen still warns on a brand-new release:
+  That can be a first-run reputation delay even for signed apps — not a malware detection.
+  Prefer verifying Authenticode + SHA256SUMS.txt.
 
 Do NOT disable Windows Defender.
 

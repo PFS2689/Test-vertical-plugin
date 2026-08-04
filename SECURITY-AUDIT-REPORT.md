@@ -32,7 +32,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 ### High
 | ID | Issue |
 |----|--------|
-| H1 | Windows Setup.exe / plugin DLL are **unsigned** (SmartScreen “Unknown publisher”) — reputation / supply-chain risk until Authenticode is configured |
+| H1 | ~~Windows Setup.exe / plugin DLL unsigned~~ → **Fixed in CI:** tag releases require Authenticode (Azure Artifact Signing or PFX); see `docs/SIGNING-WINDOWS.md` |
 
 ### Medium
 | ID | Issue |
@@ -102,7 +102,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 | No network / no child processes / no Run keys | Pass |
 | No Defender exclusions | Pass |
 | `/DYNAMICBASE` `/NXCOMPAT` / `/DEBUG:NONE` | Pass |
-| Authenticode signed | **Not configured** (remaining H1) |
+| Authenticode signed | **Required on tag releases** (Azure Artifact Signing or PFX); CI verifies `Get-AuthenticodeSignature` → Valid |
 
 ---
 
@@ -121,8 +121,8 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 
 ## 7. Remaining risks / recommendations
 
-1. **Configure Authenticode** (Azure Trusted Signing or EV cert) for `obs-shorts-vertical.dll` and `Vertical-Shorts-Plugin-1.0.5-Setup.exe`.  
-2. After signing, re-run Defender and submit any residual FP to Microsoft with SHA-256 + source URL.  
+1. Ensure repo secrets for Azure Artifact Signing or `WINDOWS_CODESIGN_PFX_*` are configured (see `docs/SIGNING-WINDOWS.md`).  
+2. After the first signed public release, allow SmartScreen reputation to accumulate; submit residual FPs to Microsoft WDSI if needed.  
 3. Pin GitHub Actions to full commit SHAs.  
 4. Prefer `rtmps://` (UI already warns on cleartext `rtmp://`).
 

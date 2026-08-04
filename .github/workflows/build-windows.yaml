@@ -11,15 +11,22 @@ on:
       commitHash:
         description: Short commit hash
         value: ${{ jobs.windows-build.outputs.commitHash }}
+      signed:
+        description: Whether Authenticode signing was applied
+        value: ${{ jobs.windows-build.outputs.signed }}
 
 jobs:
   windows-build:
     name: Build Windows x64
     runs-on: windows-2022
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       pluginName: ${{ steps.setup.outputs.pluginName }}
       pluginVersion: ${{ steps.setup.outputs.pluginVersion }}
       commitHash: ${{ steps.setup.outputs.commitHash }}
+      signed: ${{ steps.creds.outputs.signed }}
     defaults:
       run:
         shell: pwsh
@@ -36,11 +43,68 @@ jobs:
           "pluginVersion=$($BuildSpec.version)" >> $env:GITHUB_OUTPUT
           "commitHash=$($env:GITHUB_SHA.Substring(0,9))" >> $env:GITHUB_OUTPUT
 
+      - name: Detect code-signing credentials
+        id: creds
+        run: |
+          $hasAzure = -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_ID }}') -and
+                      -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TENANT_ID }}') -and
+                      -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_CLIENT_SECRET }}') -and
+                      -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}') -and
+                      -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}') -and
+                      -not [string]::IsNullOrWhiteSpace('${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}')
+          $hasPfx = -not [string]::IsNullOrWhiteSpace('${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}') -and
+                    -not [string]::IsNullOrWhiteSpace('${{ secrets.WINDOWS_CODESIGN_PASSWORD }}')
+          "has_azure=$([bool]$hasAzure)" >> $env:GITHUB_OUTPUT
+          "has_pfx=$([bool]$hasPfx)" >> $env:GITHUB_OUTPUT
+          "signed=$([bool]($hasAzure -or $hasPfx))" >> $env:GITHUB_OUTPUT
+          if ($hasAzure) { Write-Host 'Signing mode: Azure Artifact Signing' }
+          elseif ($hasPfx) { Write-Host 'Signing mode: PFX / signtool' }
+          else { Write-Host 'Signing mode: none' }
+
+      - name: Require Authenticode credentials on Release tags
+        if: github.ref_type == 'tag'
+        run: |
+          if ('${{ steps.creds.outputs.signed }}' -ne 'true') {
+            throw @"
+          Authenticode signing credentials are required for production tag releases.
+
+          Add Azure Artifact Signing secrets or WINDOWS_CODESIGN_PFX_BASE64 + WINDOWS_CODESIGN_PASSWORD.
+          See docs/SIGNING-WINDOWS.md
+          "@
+          }
+
       - name: Build Plugin
         uses: ./.github/actions/build-plugin
         with:
           target: x64
           config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
+
+      - name: Sign plugin DLL (Azure Artifact Signing)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Vertical Shorts Plugin
+          description-url: https://github.com/PFS2689/verticalshorts
+
+      - name: Sign plugin DLL (PFX)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: |
+          .\.github\scripts\Sign-Windows.ps1 -Required -Path @(
+            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
+          )
 
       - name: Package Plugin
         uses: ./.github/actions/package-plugin
@@ -48,6 +112,54 @@ jobs:
           target: x64
           config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
           package: 'true'
+
+      - name: Sign Setup.exe (Azure Artifact Signing)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\release\Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}-Setup.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Vertical Shorts Plugin
+          description-url: https://github.com/PFS2689/verticalshorts
+
+      - name: Sign Setup.exe (PFX)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: |
+          $ver = '${{ steps.setup.outputs.pluginVersion }}'
+          .\.github\scripts\Sign-Windows.ps1 -Required -Path @(
+            "$env:GITHUB_WORKSPACE\release\Vertical-Shorts-Plugin-$ver-Setup.exe"
+          )
+
+      - name: Verify Authenticode signatures
+        if: github.ref_type == 'tag'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.setup.outputs.pluginVersion }}'
+          $files = @(
+            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
+            "$env:GITHUB_WORKSPACE\release\Vertical-Shorts-Plugin-$ver-Setup.exe"
+          )
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) { throw "Missing file for signature check: $f" }
+            $sig = Get-AuthenticodeSignature -FilePath $f
+            Write-Host "$f => $($sig.Status) | $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              throw "Authenticode signature not Valid for $f : $($sig.Status) $($sig.StatusMessage)"
+            }
+          }
+          # Zip must contain the signed DLL (re-pack if needed — Package ran after DLL sign)
+          Write-Host 'Authenticode verification passed for DLL and Setup.exe'
 
       - name: Windows Defender scan (Release tags)
         if: github.ref_type == 'tag'
