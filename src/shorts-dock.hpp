@@ -57,12 +57,9 @@ protected:
 	EventFilterFunc filter;
 };
 
-/**
- * Shared vertical workspace controller + canvas dock.
- *
+/* Shared vertical workspace controller + canvas dock.
  * Owns vertical scenes, preview/view, outputs, automation, settings, and hotkeys.
- * Companion docks (Scenes / Sources / Transitions) call the public Request*/Populate* API.
- */
+ * Companion docks call the public Request/Populate API. */
 class ShortsDock : public QFrame {
 	Q_OBJECT
 
