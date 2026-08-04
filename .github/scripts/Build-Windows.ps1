@@ -74,7 +74,7 @@ function Build {
     Invoke-External cmake @CmakeArgs
 
     Log-Group "Building unit tests..."
-    Invoke-External cmake --build --preset "windows-${Target}" --config $Configuration --parallel --target test_settings --target test_stream_destination --target test_mixer_model -- /consoleLoggerParameters:Summary /noLogo
+    Invoke-External cmake --build "build_${Target}" --config $Configuration --target vsp_tests
 
     Log-Group "Running ctest..."
     Push-Location "build_${Target}"
