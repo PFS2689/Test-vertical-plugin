@@ -49,6 +49,11 @@ target_sources(
     src/plugin-main.cpp
     src/shorts-dock.cpp
     src/shorts-dock.hpp
+    src/plugin-settings.hpp
+    src/settings-dialog.cpp
+    src/settings-dialog.hpp
+    src/vertical-outputs.cpp
+    src/vertical-outputs.hpp
     src/qt-display.cpp
     src/qt-display.hpp
     src/display-helpers.hpp
