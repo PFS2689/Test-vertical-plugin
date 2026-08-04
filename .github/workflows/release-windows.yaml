@@ -1,0 +1,267 @@
+name: Release Windows
+run-name: Windows release ${{ github.ref_name }}
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - '*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build-windows.yaml
+    secrets: inherit
+
+  release:
+    name: Publish Windows Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout for version check
+        if: github.ref_type == 'tag'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            buildspec.json
+          sparse-checkout-cone-mode: false
+
+      - name: Validate tag
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s extglob
+          RAW_TAG="${GITHUB_REF_NAME}"
+          # Official tags use a leading "v" (e.g. v1.0.5); strip it for version compares.
+          VERSION="${RAW_TAG#v}"
+          case "${VERSION}" in
+            +([0-9]).+([0-9]).+([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+            +([0-9]).+([0-9]).+([0-9])-@(beta|rc)*([0-9]) )
+              echo "valid=true" >> "$GITHUB_OUTPUT"
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "valid=false" >> "$GITHUB_OUTPUT"
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          # Tag must match buildspec.json version (allow -betaN / -rcN suffix).
+          if [[ -f buildspec.json ]]; then
+            spec_ver=$(python3 -c 'import json; print(json.load(open("buildspec.json"))["version"])')
+            tag_base="${VERSION%%-*}"
+            if [[ "$tag_base" != "$spec_ver" ]]; then
+              echo "ERROR: tag base '$tag_base' does not match buildspec version '$spec_ver'" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Download artifacts
+        if: steps.check.outputs.valid == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Prepare release assets
+        if: steps.check.outputs.valid == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          # GitHub Release asset names cannot contain spaces (they become ".").
+          # Official shipping names are hyphenated and versioned.
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
+
+          if [[ -f "dist/${SETUP_NAME}" ]]; then
+            cp "dist/${SETUP_NAME}" "release-assets/${SETUP_NAME}"
+          elif [[ -f dist/Vertical-Shorts-Plugin-Setup.exe ]]; then
+            cp dist/Vertical-Shorts-Plugin-Setup.exe "release-assets/${SETUP_NAME}"
+          else
+            echo "ERROR: Setup.exe not found in artifacts" >&2
+            ls -la dist || true
+            exit 1
+          fi
+
+          if [[ -f "dist/${ZIP_NAME}" ]]; then
+            cp "dist/${ZIP_NAME}" "release-assets/${ZIP_NAME}"
+          elif [[ -f dist/Vertical-Shorts-Plugin.zip ]]; then
+            cp dist/Vertical-Shorts-Plugin.zip "release-assets/${ZIP_NAME}"
+          elif ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
+            cp dist/obs-shorts-vertical-*-windows-x64.zip "release-assets/${ZIP_NAME}"
+          else
+            echo "ERROR: plugin zip not found in artifacts" >&2
+            ls -la dist || true
+            exit 1
+          fi
+
+          test -f "release-assets/${SETUP_NAME}"
+          test -f "release-assets/${ZIP_NAME}"
+
+          # Zip must only contain expected OBS plugin files (no nested exe/scripts)
+          mkdir -p /tmp/pkgcheck
+          unzip -l "release-assets/${ZIP_NAME}"
+          unzip -q "release-assets/${ZIP_NAME}" -d /tmp/pkgcheck
+          if find /tmp/pkgcheck -type f \( -iname '*.exe' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.ps1' -o -iname '*.vbs' -o -iname '*.js' -o -iname 'test_*' \) | grep -q .; then
+            echo "ERROR: unexpected script/executable/test binary in zip" >&2
+            find /tmp/pkgcheck -type f
+            exit 1
+          fi
+          # Allowlist: everything must live under obs-shorts-vertical/ (plus optional root INSTALL.txt)
+          while IFS= read -r -d '' f; do
+            rel="${f#/tmp/pkgcheck/}"
+            case "$rel" in
+              obs-shorts-vertical/*|INSTALL.txt) ;;
+              *)
+                echo "ERROR: unexpected path in zip: $rel" >&2
+                exit 1
+                ;;
+            esac
+          done < <(find /tmp/pkgcheck -type f -print0)
+          test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
+
+          # Setup.exe must be a PE binary, not an Inno Setup stub, and a reasonable size
+          file "release-assets/${SETUP_NAME}" | tee /tmp/setup-file.txt
+          grep -qiE 'PE32|executable|MS Windows' /tmp/setup-file.txt
+          if strings "release-assets/${SETUP_NAME}" | grep -qi 'Inno Setup Setup Data'; then
+            echo "ERROR: Setup.exe still looks like an Inno Setup installer" >&2
+            exit 1
+          fi
+          size=$(stat -c%s "release-assets/${SETUP_NAME}")
+          # Custom MSVC installer embeds the DLL (~100KB+) plus a small stub
+          if [[ "$size" -lt 40000 || "$size" -gt 5000000 ]]; then
+            echo "ERROR: Setup.exe size looks wrong: $size bytes" >&2
+            exit 1
+          fi
+
+          ls -la release-assets
+
+      - name: ClamAV malware scan
+        if: steps.check.outputs.valid == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
+
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          # Fail the release if signature databases cannot be refreshed.
+          if ! sudo freshclam --stdout; then
+            echo "ERROR: freshclam failed — refusing to publish without current signatures" >&2
+            exit 1
+          fi
+          echo "Scanning release assets with ClamAV (zip + Setup.exe)..."
+          set +e
+          clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          # clamscan: 0 = clean, 1 = infected, 2+ = error
+          if [[ "$status" -eq 1 ]]; then
+            echo "ERROR: ClamAV found malware — aborting release" >&2
+            echo "--- clamav-report.txt ---"
+            cat clamav-report.txt
+            exit 1
+          elif [[ "$status" -ge 2 ]]; then
+            echo "ERROR: ClamAV scan failed (exit $status)" >&2
+            cat clamav-report.txt || true
+            exit 1
+          fi
+          echo "CLAMAV_CLEAN=true" >> "$GITHUB_ENV"
+          echo "ClamAV: CLEAN"
+          # Keep ClamAV report in workflow logs only — do not attach to the public release.
+
+          # Official checksum file: only the two shipping binaries
+          (
+            cd release-assets
+            rm -f SHA256SUMS SHA256SUMS.txt
+            sha256sum -- "${SETUP_NAME}" "${ZIP_NAME}" > SHA256SUMS.txt
+          )
+          cat release-assets/SHA256SUMS.txt
+
+      - name: Write release notes
+        if: steps.check.outputs.valid == 'true'
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
+          ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
+          {
+            echo "## Vertical Shorts Plugin ${VERSION} (Windows)"
+            echo
+            echo "Open-source OBS plugin. Both downloads are built in GitHub Actions (**Windows Defender** + **ClamAV** scanned before publish)."
+            echo
+            echo "### Download"
+            echo
+            echo "- **Setup.exe (recommended):** [${SETUP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${SETUP_NAME})"
+            echo "- **Manual ZIP:** [${ZIP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${ZIP_NAME})"
+            echo "- **Checksums:** [SHA256SUMS.txt](https://github.com/${{ github.repository }}/releases/latest/download/SHA256SUMS.txt)"
+            echo
+            echo "### Install (Setup.exe)"
+            echo "1. Close OBS Studio"
+            echo "2. Run \`${SETUP_NAME}\`"
+            echo "3. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Install (zip)"
+            echo "1. Close OBS"
+            echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
+            echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
+            echo "4. Start OBS → **View → Docks → Vertical Shorts**"
+            echo
+            echo "### Safety analysis"
+            echo "- **Windows Defender + ClamAV malware scans: CLEAN** (zip, Setup.exe, and DLL; release is blocked if anything is flagged)"
+            echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
+            echo "- It only copies the plugin into \`%APPDATA%\\obs-studio\\plugins\` (per-user, no Administrator rights)"
+            echo "- No downloads, no Run-key changes, no bundled third-party stub"
+            echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
+            echo "- Source code: https://github.com/${{ github.repository }}"
+            echo
+            echo "### Windows SmartScreen note"
+            echo "Because this open-source build is **not Authenticode-signed**, Windows may show **\"Windows protected your PC\" / Unknown publisher**."
+            echo "That is a reputation warning for new unsigned software — **not** a confirmed malware detection."
+            echo "Click **More info → Run anyway** if you trust this GitHub release."
+            echo "Do **not** disable Windows Defender. You can [submit a false positive to Microsoft](https://www.microsoft.com/wdsi/filesubmission) if needed."
+            echo
+            echo "### Checksums (SHA-256)"
+            echo
+            echo "Also published as the \`SHA256SUMS.txt\` release asset."
+            echo
+            while IFS= read -r line; do
+              hash="${line%% *}"
+              name="${line#*  }"
+              echo "- \`$name\`: \`$hash\`"
+            done < release-assets/SHA256SUMS.txt
+            echo
+            echo "### Signing"
+            echo "Authenticode code signing is **not yet configured** for this open-source project."
+            echo "Until signing is available, verify SHA-256 checksums against this release note / \`SHA256SUMS.txt\`."
+          } > RELEASE_BODY.md
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.valid == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.check.outputs.tag }}
+          name: Vertical Shorts Plugin ${{ steps.check.outputs.version }}
+          body_path: RELEASE_BODY.md
+          draft: false
+          prerelease: false
+          make_latest: true
+          # release-assets/ contains only Setup.exe, zip, and SHA256SUMS.txt
+          files: release-assets/*
+          fail_on_unmatched_files: true
