@@ -55,40 +55,43 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # Manual zip (primary non one-click download)
+          # Zip only — no .exe installers (avoids SmartScreen / AV false positives)
+          find dist -type f -name '*.exe' -delete || true
           if ls dist/Vertical-Shorts-Plugin.zip >/dev/null 2>&1; then
             cp dist/Vertical-Shorts-Plugin.zip release-assets/
           fi
           if ls dist/Vertical-Shorts-Plugin-*.zip >/dev/null 2>&1; then
             cp dist/Vertical-Shorts-Plugin-*.zip release-assets/ 2>/dev/null || true
           fi
-          if ls dist/VerticalShortsPlugin-Setup.exe >/dev/null 2>&1; then
-            cp dist/VerticalShortsPlugin-Setup.exe release-assets/
-          fi
-          if ls dist/VerticalShortsPlugin-*-Windows-Setup.exe >/dev/null 2>&1; then
-            cp dist/VerticalShortsPlugin-*-Windows-Setup.exe release-assets/
-          fi
           if ls dist/obs-shorts-vertical-*-windows-x64.zip >/dev/null 2>&1; then
             cp dist/obs-shorts-vertical-*-windows-x64.zip release-assets/
           fi
-          # de-dupe if glob copied Vertical-Shorts-Plugin.zip twice
+          # Refuse to publish if any exe slipped through
+          if ls release-assets/*.exe >/dev/null 2>&1; then
+            echo "ERROR: refusing to publish .exe assets" >&2
+            ls -la release-assets
+            exit 1
+          fi
           ls -la release-assets
           {
             echo "## Vertical Shorts Plugin ${{ steps.check.outputs.version }} (Windows)"
             echo
-            echo "### Manual install (zip)"
+            echo "Open-source OBS plugin — **zip only**, no installer \`.exe\` (those often trigger false Windows virus warnings when unsigned)."
             echo
-            echo "**[Download Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)**"
+            echo "### Download"
             echo
+            echo "**[Vertical-Shorts-Plugin.zip](https://github.com/${{ github.repository }}/releases/latest/download/Vertical-Shorts-Plugin.zip)**"
+            echo
+            echo "### Install"
             echo "1. Close OBS"
             echo "2. Open \`%APPDATA%\\obs-studio\\plugins\`"
             echo "3. Copy the \`obs-shorts-vertical\` folder from the zip into that folder"
             echo "4. Start OBS → **View → Docks → Vertical Shorts**"
             echo
-            echo "### One-click install (optional)"
-            echo "**[VerticalShortsPlugin-Setup.exe](https://github.com/${{ github.repository }}/releases/latest/download/VerticalShortsPlugin-Setup.exe)**"
+            echo "### Verify (optional)"
+            echo "Source: https://github.com/${{ github.repository }}"
             echo
-            echo "### Checksums"
+            echo "### Checksums (SHA-256)"
             for f in release-assets/*; do
               echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
             done

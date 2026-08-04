@@ -48,17 +48,22 @@ function Package {
     $ProductVersion = $BuildSpec.version
 
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
-    # Manual (non one-click) zip downloads — Vertical Shorts Plugin naming
     $ManualZipVersioned = "Vertical-Shorts-Plugin-${ProductVersion}"
     $ManualZipStable = "Vertical-Shorts-Plugin"
-    $FriendlySetup = "VerticalShortsPlugin-Setup"
-    $VersionedSetup = "VerticalShortsPlugin-${ProductVersion}-Windows-Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
 
     if (Test-Path "${ProjectRoot}/INSTALL-WINDOWS.txt") {
         Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" "${ReleaseDir}/INSTALL.txt"
     }
+
+    # Never ship unsigned .exe installers — they trigger Windows SmartScreen / AV false positives.
+    Get-ChildItem -Path "${ProjectRoot}/release" -Recurse -Include *.exe,*.iss -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+
+    # Drop debug symbols from the user package
+    Get-ChildItem -Path $ReleaseDir -Recurse -Filter *.pdb -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
 
     $RemoveArgs = @{
         ErrorAction = 'SilentlyContinue'
@@ -72,7 +77,7 @@ function Package {
     }
     Remove-Item @RemoveArgs -Recurse
 
-    Log-Group "Archiving ${ProductName} (manual zip install)..."
+    Log-Group "Archiving ${ProductName} (zip-only, no installer exe)..."
     $CompressArgs = @{
         Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${ManualZipVersioned}*.*", "${ManualZipStable}*.*", "*.exe")
         CompressionLevel = 'Optimal'
@@ -80,57 +85,8 @@ function Package {
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
-    # Versioned + stable names for /releases/latest/download/Vertical-Shorts-Plugin.zip
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipVersioned}.zip"
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${ManualZipStable}.zip"
-    Log-Group
-
-    $IsccFile = "${ProjectRoot}/build_${Target}/installer-Windows.iss"
-    if ( ! ( Test-Path -Path $IsccFile ) ) {
-        throw "InnoSetup script not found at ${IsccFile}. Build the project first."
-    }
-
-    $iscc = Get-Command iscc -ErrorAction SilentlyContinue
-    if ( -not $iscc ) {
-        $candidates = @(
-            "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-            "${Env:LocalAppData}\Programs\Inno Setup 6\ISCC.exe"
-        )
-        foreach ($c in $candidates) {
-            if (Test-Path $c) {
-                $iscc = $c
-                break
-            }
-        }
-    } else {
-        $iscc = $iscc.Source
-    }
-
-    if ( -not $iscc ) {
-        throw "Inno Setup compiler (iscc) not found. Install Inno Setup 6."
-    }
-
-    Log-Group "Creating one-click Windows installer..."
-    Push-Location -Stack BuildTemp
-    Ensure-Location -Path "${ProjectRoot}/release"
-
-    Copy-Item -Path $Configuration -Destination Package -Recurse
-    if (Test-Path "Package/INSTALL.txt") {
-        Remove-Item -Force "Package/INSTALL.txt"
-    }
-
-    Invoke-External $iscc $IsccFile "/O${ProjectRoot}/release" "/F${VersionedSetup}"
-
-    Remove-Item -Path Package -Recurse -Force
-    Pop-Location -Stack BuildTemp
-
-    # Stable filename for /releases/latest/download/VerticalShortsPlugin-Setup.exe
-    if (Test-Path "${ProjectRoot}/release/${VersionedSetup}.exe") {
-        Copy-Item -Force "${ProjectRoot}/release/${VersionedSetup}.exe" `
-            "${ProjectRoot}/release/${FriendlySetup}.exe"
-    } else {
-        throw "Installer exe was not created: ${VersionedSetup}.exe"
-    }
     Log-Group
 }
 

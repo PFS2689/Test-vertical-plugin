@@ -1,17 +1,18 @@
-Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.1)
+Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.3)
 ===============================================================
+
+This package is a ZIP only (no .exe installer).
+
+Download:
+  https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip
 
 Requirements
 ------------
 - Windows 10/11 64-bit
 - OBS Studio 30 or newer (31+ recommended)
 
-Manual zip install (recommended)
---------------------------------
-Download:
-
-  https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip
-
+Install
+-------
 1. Close OBS Studio completely.
 2. Press Win+R, paste this, and press Enter:
 
@@ -28,16 +29,10 @@ Download:
 5. Start OBS Studio.
 6. Open View → Docks → Vertical Shorts.
 
-One-click install (optional)
-----------------------------
-  https://github.com/PFS2689/verticalshorts/releases/latest/download/VerticalShortsPlugin-Setup.exe
-
 Uninstall
 ---------
 Delete the obs-shorts-vertical folder from your plugins directory and restart OBS.
-If you used the Setup installer, you can also uninstall from Windows Apps & features.
 
-Usage tip
----------
-Add Camera (or Add Source), then drag to move and use the corner/edge handles to resize
-just like the main OBS preview.
+Source
+------
+https://github.com/PFS2689/verticalshorts

@@ -1,21 +1,21 @@
 # Vertical Shorts Plugin for OBS Studio
 
-**Version 1.0.1** — Windows
+**Version 1.0.3** — Windows (zip only)
 
 Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTube Shorts**, **TikTok**, and **Instagram Reels**.
 
-## Manual install (zip)
+## Download
 
-**[Download Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip)**
+**[Vertical-Shorts-Plugin.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip)**
+
+This release is **zip only** — no `.exe` installer. Unsigned setup programs often trigger Windows SmartScreen / antivirus false positives; the zip avoids that.
+
+## Install
 
 1. Close OBS Studio  
 2. Open `%APPDATA%\obs-studio\plugins`  
 3. Copy the `obs-shorts-vertical` folder from the zip into that folder  
 4. Start OBS → **View → Docks → Vertical Shorts**
-
-## One-click install (optional)
-
-**[VerticalShortsPlugin-Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/VerticalShortsPlugin-Setup.exe)**
 
 ## Features
 
@@ -34,14 +34,6 @@ Vertical canvas plugin for [OBS Studio](https://obsproject.com) made for **YouTu
 - **Windows 10/11 64-bit**
 - OBS Studio **30+** (31+ recommended)
 
-## Build from source
-
-```powershell
-cmake --preset windows-x64
-cmake --build --preset windows-x64
-cmake --install build_x64 --prefix release/RelWithDebInfo --config RelWithDebInfo
-```
-
 ## License
 
-GPL-2.0-or-later (same as OBS Studio).
+GPL-2.0-or-later (same as OBS Studio). Full source is in this repository.
