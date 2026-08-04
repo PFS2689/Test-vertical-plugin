@@ -1,0 +1,67 @@
+Vertical Shorts Plugin for OBS Studio — Windows Install (v1.0.6)
+===============================================================
+
+Security note
+-------------
+This project is open source. Release assets are built in GitHub Actions and
+scanned with ClamAV before publish. There is no malware in the plugin source.
+
+If Windows Defender / SmartScreen flags a file, it is almost always a
+false positive on the unsigned Setup.exe (Inno Setup installers are commonly
+misclassified as Trojan:Win32/Wacatac.* by ML heuristics). Prefer the ZIP
+install below if that happens.
+
+Recommended download (lowest false-positive risk):
+  https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin.zip
+
+Optional installer (per-user, no admin):
+  https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-Setup.exe
+
+Report a false positive to Microsoft (helps all users):
+  https://www.microsoft.com/wdsi/filesubmission
+  Submit the flagged file hash and mark it as a false positive / software developer.
+
+Requirements
+------------
+- Windows 10/11 64-bit
+- OBS Studio 30 or newer (31+ recommended)
+
+Install from zip (recommended)
+------------------------------
+1. Close OBS Studio completely.
+2. Press Win+R, paste this, and press Enter:
+
+   %APPDATA%\obs-studio\plugins
+
+3. If the "plugins" folder does not exist, create it.
+4. Copy the entire "obs-shorts-vertical" folder from this zip into that plugins folder.
+
+   Final path should look like:
+
+   %APPDATA%\obs-studio\plugins\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
+   %APPDATA%\obs-studio\plugins\obs-shorts-vertical\data\locale\en-US.ini
+
+5. Start OBS Studio.
+6. Open View → Docks → Vertical Shorts.
+
+Install with Setup.exe (optional)
+---------------------------------
+1. Close OBS Studio completely.
+2. Run Vertical-Shorts-Plugin-Setup.exe.
+3. Start OBS → View → Docks → Vertical Shorts.
+
+If SmartScreen says "Unknown publisher":
+  More info → Run anyway
+  (Unsigned open-source software; not the same as a malware detection.)
+
+Do NOT disable Windows Defender. Use the ZIP install or submit a false-positive
+report instead.
+
+Uninstall
+---------
+Use "Uninstall Vertical Shorts Plugin" from the Start Menu, or delete the
+obs-shorts-vertical folder from your plugins directory and restart OBS.
+
+Source
+------
+https://github.com/PFS2689/verticalshorts

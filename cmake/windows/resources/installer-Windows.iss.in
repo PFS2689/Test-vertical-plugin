@@ -1,0 +1,85 @@
+#define MyAppName "Vertical Shorts Plugin"
+#define MyAppVersion "@CMAKE_PROJECT_VERSION@"
+#define MyAppPublisher "Vertical Shorts Plugin Contributors"
+#define MyAppURL "https://github.com/PFS2689/verticalshorts"
+#define MyAppId "obs-shorts-vertical"
+
+[Setup]
+; Unique product ID — do not reuse for other apps
+AppId={{@UUID_APP@}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+AppCopyright=Copyright (C) {#MyAppPublisher}
+VersionInfoVersion={#MyAppVersion}.0
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoTextVersion={#MyAppVersion}
+VersionInfoCopyright=Copyright (C) {#MyAppPublisher}
+DefaultDirName={userappdata}\obs-studio\plugins
+AppendDefaultDirName=no
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+DisableReadyPage=no
+DisableFinishedPage=no
+AllowNoIcons=yes
+OutputBaseFilename=Vertical-Shorts-Plugin-Setup
+; Prefer ZIP compression over LZMA/solid archives.
+; Unsigned Inno Setup installers compressed with LZMA are frequently
+; misclassified by Windows Defender ML heuristics (e.g. Wacatac.B!ml).
+; ZIP + non-solid is a documented false-positive mitigation; it does not
+; disable any antivirus product.
+Compression=zip
+SolidCompression=no
+DirExistsWarning=no
+; Per-user install only — never requests Administrator rights
+PrivilegesRequired=lowest
+MinVersion=10.0
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+WizardStyle=modern
+UninstallDisplayName={#MyAppName}
+UninstallDisplayIcon={app}\{#MyAppId}\bin\64bit\obs-shorts-vertical.dll
+SetupLogging=no
+ChangesAssociations=no
+ChangesEnvironment=no
+CloseApplications=no
+RestartApplications=no
+CreateAppDir=yes
+UsedUserAreasWarning=no
+CreateUninstallRegKey=yes
+UpdateUninstallLogAppName=yes
+; No mutex / no network / no extra executables
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+SetupAppTitle={#MyAppName} Setup
+SetupWindowTitle={#MyAppName} {#MyAppVersion} Setup
+WelcomeLabel1=Welcome to {#MyAppName} Setup
+WelcomeLabel2=This installs the open-source {#MyAppName} for OBS Studio.%n%nFiles go only into your user OBS plugins folder. No admin rights are required.%n%nPlease close OBS Studio before continuing.
+
+[Files]
+; Plugin files only — DLL + locale data
+Source: "..\release\Package\{#MyAppId}\*"; DestDir: "{app}\{#MyAppId}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\INSTALL-WINDOWS.txt"; DestDir: "{app}\{#MyAppId}"; DestName: "INSTALL.txt"; Flags: ignoreversion
+
+[Icons]
+; Minimal Start Menu entry for uninstall only
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+
+[Run]
+; Intentionally empty — do not launch browsers, downloaders, or OBS
+
+[Code]
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+end;

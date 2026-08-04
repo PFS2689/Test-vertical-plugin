@@ -1,0 +1,64 @@
+name: Build Windows
+on:
+  workflow_call:
+    outputs:
+      pluginName:
+        description: Plugin name from buildspec
+        value: ${{ jobs.windows-build.outputs.pluginName }}
+      pluginVersion:
+        description: Plugin version from buildspec
+        value: ${{ jobs.windows-build.outputs.pluginVersion }}
+      commitHash:
+        description: Short commit hash
+        value: ${{ jobs.windows-build.outputs.commitHash }}
+
+jobs:
+  windows-build:
+    name: Build Windows x64
+    runs-on: windows-2022
+    outputs:
+      pluginName: ${{ steps.setup.outputs.pluginName }}
+      pluginVersion: ${{ steps.setup.outputs.pluginVersion }}
+      commitHash: ${{ steps.setup.outputs.commitHash }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set Up Environment
+        id: setup
+        run: |
+          $BuildSpec = Get-Content -Path buildspec.json -Raw | ConvertFrom-Json
+          "pluginName=$($BuildSpec.name)" >> $env:GITHUB_OUTPUT
+          "pluginVersion=$($BuildSpec.version)" >> $env:GITHUB_OUTPUT
+          "commitHash=$($env:GITHUB_SHA.Substring(0,9))" >> $env:GITHUB_OUTPUT
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup -y --no-progress
+          echo "${Env:ProgramFiles(x86)}\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Plugin
+        uses: ./.github/actions/build-plugin
+        with:
+          target: x64
+          config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
+
+      - name: Package Plugin
+        uses: ./.github/actions/package-plugin
+        with:
+          target: x64
+          config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
+          package: 'true'
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64-${{ steps.setup.outputs.commitHash }}
+          path: |
+            ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.zip
+            ${{ github.workspace }}/release/Vertical-Shorts-Plugin*.zip
+            ${{ github.workspace }}/release/Vertical-Shorts-Plugin-Setup.exe
