@@ -41,6 +41,10 @@ jobs:
           "pluginName=$($BuildSpec.name)" >> $env:GITHUB_OUTPUT
           "pluginVersion=$($BuildSpec.version)" >> $env:GITHUB_OUTPUT
           "commitHash=$($env:GITHUB_SHA.Substring(0,9))" >> $env:GITHUB_OUTPUT
+          $ver = [string]$BuildSpec.version
+          $setupName = "Vertical Shorts Plugin $ver Setup.exe"
+          "setupFileName=$setupName" >> $env:GITHUB_OUTPUT
+          Write-Host "Installer filename: $setupName"
 
       - name: Detect code-signing credentials
         id: creds
@@ -66,99 +70,32 @@ jobs:
           if ('${{ steps.creds.outputs.signed }}' -ne 'true') {
             Write-Warning @"
           Authenticode signing credentials are not configured.
-          This tag release will ship UNSIGNED so the OBS load-path / OBS 32.2.1 fix can publish.
+          This tag release will ship UNSIGNED so load-path / OBS fixes can publish.
           Add Azure Artifact Signing secrets or WINDOWS_CODESIGN_PFX_BASE64 + WINDOWS_CODESIGN_PASSWORD
           (see docs/SIGNING-WINDOWS.md) and re-tag to publish signed builds.
           "@
           }
 
+      - name: Install Inno Setup 6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install innosetup --no-progress -y
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup 6' }
+          & $iscc /? | Select-Object -First 3
+          Write-Host "ISCC: $iscc"
+
+      # 1) Build plugin
       - name: Build Plugin
         uses: ./.github/actions/build-plugin
         with:
           target: x64
           config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
 
-      - name: Sign plugin DLL (Azure Artifact Signing)
-        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
-        uses: azure/artifact-signing-action@v2
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
-          files: ${{ github.workspace }}\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: Vertical Shorts Plugin
-          description-url: https://github.com/PFS2689/verticalshorts
-
-      - name: Sign plugin DLL (PFX)
-        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
-        env:
-          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
-          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
-        run: |
-          .\.github\scripts\Sign-Windows.ps1 -Required -Path @(
-            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
-          )
-
-      - name: Package Plugin
-        uses: ./.github/actions/package-plugin
-        with:
-          target: x64
-          config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
-          package: 'true'
-
-      - name: Sign Setup.exe (Azure Artifact Signing)
-        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
-        uses: azure/artifact-signing-action@v2
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
-          files: ${{ github.workspace }}\release\Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}-Setup.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: Vertical Shorts Plugin
-          description-url: https://github.com/PFS2689/verticalshorts
-
-      - name: Sign Setup.exe (PFX)
-        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
-        env:
-          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
-          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
-        run: |
-          $ver = '${{ steps.setup.outputs.pluginVersion }}'
-          .\.github\scripts\Sign-Windows.ps1 -Required -Path @(
-            "$env:GITHUB_WORKSPACE\release\Vertical-Shorts-Plugin-$ver-Setup.exe"
-          )
-
-      - name: Verify Authenticode signatures
-        if: github.ref_type == 'tag' && steps.creds.outputs.signed == 'true'
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ver = '${{ steps.setup.outputs.pluginVersion }}'
-          $files = @(
-            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
-            "$env:GITHUB_WORKSPACE\release\Vertical-Shorts-Plugin-$ver-Setup.exe"
-          )
-          foreach ($f in $files) {
-            if (-not (Test-Path $f)) { throw "Missing file for signature check: $f" }
-            $sig = Get-AuthenticodeSignature -FilePath $f
-            Write-Host "$f => $($sig.Status) | $($sig.SignerCertificate.Subject)"
-            if ($sig.Status -ne 'Valid') {
-              throw "Authenticode signature not Valid for $f : $($sig.Status) $($sig.StatusMessage)"
-            }
-          }
-          Write-Host 'Authenticode verification passed for DLL and Setup.exe'
-
+      # 2) Verify plugin DLL + resources before any packaging
       - name: Audit OBS module exports
         shell: pwsh
         run: |
@@ -188,13 +125,17 @@ jobs:
           }
           Write-Host 'OBS module export audit passed'
 
-      - name: Audit release package layout
+      - name: Prepare INSTALL.txt and audit plugin layout
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $config = if ('${{ github.ref_type }}' -eq 'tag') { 'Release' } else { 'RelWithDebInfo' }
           $releaseDir = Join-Path $env:GITHUB_WORKSPACE "release\$config"
           $root = Join-Path $releaseDir 'obs-shorts-vertical'
+          if (Test-Path "$env:GITHUB_WORKSPACE\INSTALL-WINDOWS.txt") {
+            Copy-Item -Force "$env:GITHUB_WORKSPACE\INSTALL-WINDOWS.txt" (Join-Path $releaseDir 'INSTALL.txt')
+            Copy-Item -Force "$env:GITHUB_WORKSPACE\INSTALL-WINDOWS.txt" (Join-Path $root 'INSTALL.txt')
+          }
           $required = @(
             (Join-Path $root 'bin\64bit\obs-shorts-vertical.dll'),
             (Join-Path $root 'data\locale\en-US.ini'),
@@ -204,10 +145,6 @@ jobs:
             if (-not (Test-Path $p)) { throw "Missing required package file: $p" }
             Write-Host "OK $p"
           }
-          # Also place INSTALL.txt inside the plugin folder for zip installs
-          Copy-Item -Force (Join-Path $releaseDir 'INSTALL.txt') (Join-Path $root 'INSTALL.txt')
-          Write-Host "OK $(Join-Path $root 'INSTALL.txt')"
-          # OBS third-party layout must not ship nested Qt/OBS runtime DLLs
           $unexpected = Get-ChildItem -Recurse $root -File | Where-Object {
             $_.Extension -match '\.(exe|bat|cmd|ps1)$' -or
             $_.Name -match '^(Qt6|obs\.dll|obs-frontend-api)'
@@ -216,14 +153,110 @@ jobs:
             $unexpected | ForEach-Object { Write-Host "UNEXPECTED: $($_.FullName)" }
             throw 'Unexpected executables or runtime DLLs in plugin package'
           }
-          Write-Host 'Package layout audit passed'
+          Write-Host 'Plugin layout audit passed'
 
+      - name: Sign plugin DLL (Azure Artifact Signing)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Vertical Shorts Plugin
+          description-url: https://github.com/PFS2689/verticalshorts
+
+      - name: Sign plugin DLL (PFX)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: |
+          .\.github\scripts\Sign-Windows.ps1 -Required -Path @(
+            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
+          )
+
+      # 3–5) Stage payload + Inno Setup package (Package-Windows.ps1)
+      - name: Package Plugin (stage + Inno Setup)
+        uses: ./.github/actions/package-plugin
+        with:
+          target: x64
+          config: ${{ github.ref_type == 'tag' && 'Release' || 'RelWithDebInfo' }}
+          package: 'true'
+
+      - name: Verify Inno Setup installer output
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Join-Path $env:GITHUB_WORKSPACE "release\${{ steps.setup.outputs.setupFileName }}"
+          if (-not (Test-Path $setup)) { throw "Missing Inno Setup installer: $setup" }
+          $len = (Get-Item $setup).Length
+          if ($len -lt 50000) { throw "Installer unexpectedly small: $len bytes" }
+          Write-Host "OK Inno Setup installer: $setup ($len bytes)"
+          # Confirm Inno marker present
+          $bytes = [System.IO.File]::ReadAllBytes($setup)
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if ($text -notmatch 'Inno Setup') {
+            throw 'Output EXE does not look like an Inno Setup installer'
+          }
+          Write-Host 'Inno Setup signature string found in installer'
+
+      - name: Sign Setup.exe (Azure Artifact Signing)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+          files: ${{ github.workspace }}\release\${{ steps.setup.outputs.setupFileName }}
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Vertical Shorts Plugin
+          description-url: https://github.com/PFS2689/verticalshorts
+
+      - name: Sign Setup.exe (PFX)
+        if: github.ref_type == 'tag' && steps.creds.outputs.has_azure != 'true' && steps.creds.outputs.has_pfx == 'true'
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+        run: |
+          $setup = Join-Path $env:GITHUB_WORKSPACE "release\${{ steps.setup.outputs.setupFileName }}"
+          .\.github\scripts\Sign-Windows.ps1 -Required -Path @($setup)
+
+      - name: Verify Authenticode signatures
+        if: github.ref_type == 'tag' && steps.creds.outputs.signed == 'true'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            "$env:GITHUB_WORKSPACE\release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
+            (Join-Path $env:GITHUB_WORKSPACE "release\${{ steps.setup.outputs.setupFileName }}")
+          )
+          foreach ($f in $files) {
+            if (-not (Test-Path $f)) { throw "Missing file for signature check: $f" }
+            $sig = Get-AuthenticodeSignature -FilePath $f
+            Write-Host "$f => $($sig.Status) | $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              throw "Authenticode signature not Valid for $f : $($sig.Status) $($sig.StatusMessage)"
+            }
+          }
+          Write-Host 'Authenticode verification passed for DLL and Setup.exe'
+
+      # 6) Scan final installer
       - name: Windows Defender scan (Release tags)
         if: github.ref_type == 'tag'
         run: |
           $ErrorActionPreference = 'Stop'
           $ver = '${{ steps.setup.outputs.pluginVersion }}'
-          $setup = Join-Path $env:GITHUB_WORKSPACE "release\Vertical-Shorts-Plugin-$ver-Setup.exe"
+          $setup = Join-Path $env:GITHUB_WORKSPACE "release\${{ steps.setup.outputs.setupFileName }}"
           $zip = Join-Path $env:GITHUB_WORKSPACE "release\Vertical-Shorts-Plugin-$ver.zip"
           $dll = Join-Path $env:GITHUB_WORKSPACE "release\Release\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"
           foreach ($p in @($setup, $zip, $dll)) {
@@ -235,13 +268,11 @@ jobs:
           ) | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $mp) { throw 'MpCmdRun.exe not found — cannot run Windows Defender scan' }
 
-          # Update signatures when possible; do not disable Defender or add exclusions.
           try { Start-Process -FilePath $mp -ArgumentList @('-SignatureUpdate') -Wait -NoNewWindow } catch { Write-Host 'Signature update skipped/failed; continuing with current defs' }
 
           foreach ($p in @($setup, $zip, $dll)) {
             Write-Host "Defender scan: $p"
             $proc = Start-Process -FilePath $mp -ArgumentList @('-Scan','-ScanType','3','-File', $p) -Wait -PassThru -NoNewWindow
-            # MpCmdRun: 0 = no threats, 2 = threats found
             if ($proc.ExitCode -eq 2) { throw "Windows Defender reported a threat in $p" }
             if ($proc.ExitCode -ne 0) { throw "Windows Defender scan failed for $p (exit $($proc.ExitCode))" }
             Write-Host "Defender CLEAN: $p"
@@ -254,4 +285,4 @@ jobs:
           path: |
             ${{ github.workspace }}/release/${{ steps.setup.outputs.pluginName }}-${{ steps.setup.outputs.pluginVersion }}-windows-x64*.zip
             ${{ github.workspace }}/release/Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}.zip
-            ${{ github.workspace }}/release/Vertical-Shorts-Plugin-${{ steps.setup.outputs.pluginVersion }}-Setup.exe
+            ${{ github.workspace }}/release/${{ steps.setup.outputs.setupFileName }}

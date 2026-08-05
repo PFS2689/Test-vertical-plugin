@@ -6,7 +6,7 @@ Professional Vertical Streaming Plugin for OBS Studio.
 Downloads (ClamAV + Windows Defender scanned before each GitHub release is published):
 
   Setup.exe (recommended):
-    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5-Setup.exe
+    https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical.Shorts.Plugin.1.0.5.Setup.exe
 
   Manual zip:
     https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5.zip
@@ -16,18 +16,22 @@ Downloads (ClamAV + Windows Defender scanned before each GitHub release is publi
 
 About the Setup.exe
 -------------------
-This is a small custom MSVC installer (not Inno Setup). It only copies the
-plugin files into the OBS third-party plugins folder that OBS actually loads:
+This is a standard Inno Setup 6 installer. It installs the OBS plugin into the
+folder OBS actually loads on Windows:
 
   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
 
 Administrator rights (UAC) are required because ProgramData is machine-wide.
 OBS Studio does NOT load plugins from %APPDATA%\obs-studio\plugins on Windows.
 
+Local filename (exact):
+
+  Vertical Shorts Plugin 1.0.5 Setup.exe
+
 Authenticode:
   When signing credentials are configured in CI, production releases are
   Authenticode-signed. Verify with:
-    Get-AuthenticodeSignature "Vertical-Shorts-Plugin-1.0.5-Setup.exe"
+    Get-AuthenticodeSignature "Vertical Shorts Plugin 1.0.5 Setup.exe"
   Status should be Valid when signed.
 
 Do NOT disable Windows Defender.
@@ -40,7 +44,7 @@ Requirements
 Install with Setup.exe (recommended)
 ------------------------------------
 1. Close OBS Studio completely.
-2. Run Vertical-Shorts-Plugin-1.0.5-Setup.exe, approve UAC, and click OK.
+2. Run "Vertical Shorts Plugin 1.0.5 Setup.exe", approve UAC, and finish the wizard.
 3. Start OBS Studio.
 4. If OBS shows Tools → Plugin Manager, ensure "Vertical Shorts Plugin" is enabled,
    then restart OBS if you just enabled it.
@@ -83,7 +87,8 @@ If the dock does not appear
 
 Uninstall
 ---------
-Delete:
+Use Windows Settings → Apps → Vertical Shorts Plugin, or run the Inno Setup
+uninstaller from the install folder. You can also delete:
 
   %ProgramData%\obs-studio\plugins\obs-shorts-vertical
 
