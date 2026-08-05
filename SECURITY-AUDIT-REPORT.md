@@ -5,7 +5,7 @@
 **Plugin version:** 1.0.5  
 **Official tag:** `v1.0.5`
 
-This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Setup.exe, packaging scripts, resources, and credential handling.  
+This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the Windows Inno Setup installer, packaging scripts, resources, and credential handling.  
 **No antivirus bypass, Defender exclusions, packers, or obfuscation were added.**
 
 ---
@@ -64,7 +64,7 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 | OBS module description | Matches professional product description |
 | Release link flags | `/DEBUG:NONE` for Release (no PDB / no debug directory in shipping PE) |
 | CRT | Explicit `CMAKE_MSVC_RUNTIME_LIBRARY` → `/MD` (Release) / `/MDd` (Debug) |
-| Setup.exe | `/O2 /DNDEBUG /MD /DEBUG:NONE /OPT:REF /OPT:ICF /DYNAMICBASE /NXCOMPAT` |
+| Setup.exe | Inno Setup 6 (`ISCC.exe`), LZMA2 solid compression; signed in CI when credentials exist |
 | Package payload | Strip on-disk `data/icons` (icons already in DLL via Qt resources); keep `data/locale` only |
 | Windows Defender | Tag builds run `MpCmdRun -Scan -ScanType 3` on Setup.exe, zip, and DLL before artifact upload |
 | ClamAV | Release job still requires successful `freshclam` + clean scan before publish |
@@ -79,14 +79,14 @@ This audit covers C++/Qt/OBS sources, CMake, CI/workflows, the custom Windows Se
 | **Windows Defender** | GitHub Actions `windows-2022` on tag builds | **Gated** via `MpCmdRun.exe` — threats abort the build; no exclusions |
 | **Windows Defender** | This Linux cloud agent | Not runnable locally (no Windows host) |
 
-**Honesty statement:** This audit **cannot** claim the project is “virus-free.” Unsigned Setup.exe that embeds a PE as RCDATA can still receive Defender ML / SmartScreen reputation detections. Those must be investigated per-file if reported — never suppressed.
+**Honesty statement:** This audit **cannot** claim the project is “virus-free.” Unsigned or new-publisher Setup.exe builds can still receive Defender ML / SmartScreen reputation detections. Those must be investigated per-file if reported — never suppressed.
 
 ### Why Windows may still warn (expected)
 
 | Signal | Cause | Malware? |
 |--------|-------|----------|
 | SmartScreen “Unknown publisher” / “Windows protected your PC” | **No Authenticode signature** + new/low download reputation | **No** — reputation warning only |
-| Occasional Defender ML on Setup.exe | Small custom installer extracting embedded DLL (RCDATA) | Usually **false positive** if ClamAV/Defender file scan is clean |
+| Occasional Defender ML / SmartScreen on Setup.exe | New publisher reputation on Inno Setup installers | Usually **false positive** if ClamAV/Defender file scan is clean; prefer Authenticode |
 
 **Do not** disable Defender, add exclusions, or bypass SmartScreen. If a confirmed false positive remains after signing, submit to [Microsoft WDSI](https://www.microsoft.com/wdsi/filesubmission).
 

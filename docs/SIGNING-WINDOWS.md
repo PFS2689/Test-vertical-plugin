@@ -3,13 +3,15 @@
 Production Release tags (**`vX.Y.Z`**) **should** carry a valid Authenticode signature on:
 
 - `obs-shorts-vertical.dll`
-- `Vertical-Shorts-Plugin-<version>-Setup.exe`
+- `Vertical Shorts Plugin <version> Setup.exe` (Inno Setup 6)
 
 When Azure Artifact Signing or PFX secrets are present, CI signs both artifacts and verifies `Get-AuthenticodeSignature` → `Valid`.  
 If secrets are missing, CI still publishes the Release (unsigned) so load-path / OBS compatibility fixes can ship; re-tag after adding secrets to publish signed builds.
 
 Signed builds are what remove the SmartScreen **“Unknown publisher”** block for unknown publishers.  
 Do **not** disable Defender or add exclusions.
+
+See also [INSTALLER-WINDOWS.md](INSTALLER-WINDOWS.md).
 
 ---
 
@@ -54,12 +56,14 @@ Best for ongoing commercial/OSS releases you control.
 ## What CI does on a tag
 
 1. Build MSVC **Release** plugin DLL  
-2. **Sign** `obs-shorts-vertical.dll`  
-3. Package zip + Setup.exe (Setup embeds the **already-signed** DLL)  
-4. **Sign** `Vertical-Shorts-Plugin-*-Setup.exe`  
-5. Verify `Get-AuthenticodeSignature` → `Valid`  
-6. Windows Defender + ClamAV  
-7. Publish GitHub Release + `SHA256SUMS.txt`
+2. Verify DLL exports + package layout  
+3. **Sign** `obs-shorts-vertical.dll`  
+4. Stage payload under `release/staging/`  
+5. Package with **Inno Setup 6** (`ISCC.exe`) → `Vertical Shorts Plugin <version> Setup.exe`  
+6. **Sign** the Setup.exe  
+7. Verify `Get-AuthenticodeSignature` → `Valid`  
+8. Windows Defender + ClamAV  
+9. Publish GitHub Release + `SHA256SUMS.txt`
 
 ---
 
@@ -77,7 +81,7 @@ Or push any new `v*` tag on the signing branch/main. The Release Windows workflo
 ## Local verification
 
 ```powershell
-Get-AuthenticodeSignature '.\Vertical-Shorts-Plugin-1.0.5-Setup.exe'
+Get-AuthenticodeSignature '.\Vertical Shorts Plugin 1.0.5 Setup.exe'
 Get-AuthenticodeSignature '.\obs-shorts-vertical.dll'
 ```
 

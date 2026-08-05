@@ -26,124 +26,134 @@ if ( $PSVersionTable.PSVersion -lt '7.2.0' ) {
     exit 2
 }
 
-function Get-VcVarsBat {
-    $vswhere = "${Env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-    if ( ! ( Test-Path $vswhere ) ) {
-        throw "vswhere.exe not found; Visual Studio Build Tools are required."
+function Find-ISCC {
+    $candidates = @(
+        "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        "${Env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+        "${Env:LOCALAPPDATA}\Programs\Inno Setup 6\ISCC.exe"
+    )
+    foreach ($p in $candidates) {
+        if ( Test-Path $p ) { return $p }
     }
-    $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-    if ( ! $vsPath ) {
-        throw "Visual Studio installation with MSVC tools not found."
-    }
-    $vcvars = Join-Path $vsPath 'VC\Auxiliary\Build\vcvars64.bat'
-    if ( ! ( Test-Path $vcvars ) ) {
-        throw "vcvars64.bat not found at $vcvars"
-    }
-    return $vcvars
+    $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ( $cmd ) { return $cmd.Source }
+    return $null
 }
 
-function Build-CleanSetupExe {
+function Assert-PluginPayload {
     param(
-        [string] $ProjectRoot,
-        [string] $ReleaseDir,
-        [string] $ProductVersion,
-        [string] $SetupName
+        [string] $PluginRoot,
+        [string] $InstallTxt
     )
 
-    $PluginId = 'obs-shorts-vertical'
-    $DllPath = Join-Path $ReleaseDir "$PluginId\bin\64bit\obs-shorts-vertical.dll"
-    $LocalePath = Join-Path $ReleaseDir "$PluginId\data\locale\en-US.ini"
-    $InstallTxt = Join-Path $ReleaseDir 'INSTALL.txt'
-    $ManifestPath = Join-Path $ProjectRoot 'src\windows-setup\setup.manifest'
-    $SetupSrc = Join-Path $ProjectRoot 'src\windows-setup\setup.c'
-    $RcTemplate = Join-Path $ProjectRoot 'src\windows-setup\setup.rc.in'
-    $HeaderPath = Join-Path $ProjectRoot 'src\windows-setup\setup_resources.h'
+    $dll = Join-Path $PluginRoot 'bin\64bit\obs-shorts-vertical.dll'
+    $locale = Join-Path $PluginRoot 'data\locale\en-US.ini'
 
-    foreach ($p in @($DllPath, $LocalePath, $InstallTxt, $ManifestPath, $SetupSrc, $RcTemplate, $HeaderPath)) {
+    foreach ($p in @($dll, $locale, $InstallTxt)) {
         if ( ! ( Test-Path $p ) ) {
-            throw "Required setup payload/source missing: $p"
+            throw "Required plugin payload missing (build plugin before packaging): $p"
+        }
+        if ( (Get-Item $p).Length -lt 1 ) {
+            throw "Required plugin payload is empty: $p"
         }
     }
 
-    $parts = $ProductVersion.Split('.')
-    if ( $parts.Count -lt 3 ) {
-        throw "Plugin version must be MAJOR.MINOR.PATCH (got '$ProductVersion')"
+    # OBS module must not ship nested runtimes or scripts
+    $unexpected = Get-ChildItem -Recurse $PluginRoot -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.Extension -match '\.(exe|bat|cmd|ps1|vbs)$' -or
+        $_.Name -match '^(Qt6|obs\.dll|obs-frontend-api)'
     }
-    $verMajor = [int]$parts[0]
-    $verMinor = [int]$parts[1]
-    $verPatch = [int]$parts[2]
-
-    $workDir = Join-Path $ProjectRoot "release\setup-build"
-    if ( Test-Path $workDir ) {
-        Remove-Item -Recurse -Force $workDir
-    }
-    New-Item -ItemType Directory -Path $workDir | Out-Null
-
-    # Resource compiler needs doubled backslashes in quoted path strings.
-    function Escape-RcPath([string] $Path) {
-        return $Path.Replace('\', '\\')
+    if ( $unexpected ) {
+        $unexpected | ForEach-Object { Write-Host "UNEXPECTED: $($_.FullName)" }
+        throw 'Unexpected executables or runtime DLLs in plugin payload — refusing to package'
     }
 
-    $rc = Get-Content -Raw -Path $RcTemplate
-    $rc = $rc.Replace('PAYLOAD_DLL_PATH', (Escape-RcPath $DllPath))
-    $rc = $rc.Replace('PAYLOAD_LOCALE_PATH', (Escape-RcPath $LocalePath))
-    $rc = $rc.Replace('PAYLOAD_INSTALL_TXT_PATH', (Escape-RcPath $InstallTxt))
-    $rc = $rc.Replace('PAYLOAD_MANIFEST_PATH', (Escape-RcPath $ManifestPath))
-    $rc = $rc.Replace('PAYLOAD_VER_MAJOR', "$verMajor")
-    $rc = $rc.Replace('PAYLOAD_VER_MINOR', "$verMinor")
-    $rc = $rc.Replace('PAYLOAD_VER_PATCH', "$verPatch")
-    $rc = $rc.Replace('PAYLOAD_VER_STRING', "$ProductVersion")
-    $rcPath = Join-Path $workDir 'setup.rc'
-    Set-Content -Path $rcPath -Value $rc -Encoding ascii
+    Write-Host "Verified payload DLL: $dll ($((Get-Item $dll).Length) bytes)"
+    Write-Host "Verified locale: $locale"
+    Write-Host "Verified INSTALL.txt: $InstallTxt"
+}
 
-    # Copy header next to generated rc so rc.exe can include it easily.
-    Copy-Item -Force $HeaderPath (Join-Path $workDir 'setup_resources.h')
+function New-InstallerStaging {
+    param(
+        [string] $ProjectRoot,
+        [string] $ReleaseDir,
+        [string] $StageRoot
+    )
 
-    # Avoid /D string-quoting pitfalls on cmd.exe — emit a tiny header instead.
-    $versionHeader = @"
-#pragma once
-#define VSP_SETUP_VERSION_A "$ProductVersion"
+    if ( Test-Path $StageRoot ) {
+        Remove-Item -Recurse -Force $StageRoot
+    }
+
+    $srcPlugin = Join-Path $ReleaseDir 'obs-shorts-vertical'
+    $dstPlugin = Join-Path $StageRoot 'obs-shorts-vertical'
+    if ( ! ( Test-Path $srcPlugin ) ) {
+        throw "Plugin output folder missing (build Release/RelWithDebInfo first): $srcPlugin"
+    }
+
+    New-Item -ItemType Directory -Path $StageRoot | Out-Null
+    Copy-Item -Recurse -Force $srcPlugin $dstPlugin
+
+    $installSrc = Join-Path $ReleaseDir 'INSTALL.txt'
+    if ( Test-Path $installSrc ) {
+        Copy-Item -Force $installSrc (Join-Path $dstPlugin 'INSTALL.txt')
+        Copy-Item -Force $installSrc (Join-Path $StageRoot 'INSTALL.txt')
+    }
+
+    return $dstPlugin
+}
+
+function Build-InnoSetupInstaller {
+    param(
+        [string] $ProjectRoot,
+        [string] $StageRoot,
+        [string] $ProductVersion,
+        [string] $SetupBaseName,
+        [string] $OutputDir
+    )
+
+    $iss = Join-Path $ProjectRoot 'installer\windows\VerticalShortsPlugin.iss'
+    if ( ! ( Test-Path $iss ) ) {
+        throw "Inno Setup script missing: $iss"
+    }
+
+    $iscc = Find-ISCC
+    if ( ! $iscc ) {
+        throw @"
+ISCC.exe (Inno Setup 6 compiler) not found.
+Install Inno Setup 6 (https://jrsoftware.org/isinfo.php) or run:
+  choco install innosetup --no-progress -y
 "@
-    Set-Content -Path (Join-Path $workDir 'setup_version.h') -Value $versionHeader -Encoding ascii
+    }
 
-    $outExe = Join-Path $ProjectRoot "release\${SetupName}.exe"
+    $outExe = Join-Path $OutputDir "${SetupBaseName}.exe"
     if ( Test-Path $outExe ) {
         Remove-Item -Force $outExe
     }
 
-    $includeDir = Join-Path $ProjectRoot 'src\windows-setup'
-    $vcvars = Get-VcVarsBat
-    $resPath = Join-Path $workDir 'setup.res'
+    Log-Group "Compiling Inno Setup installer with $iscc ..."
+    Write-Host "SourceDir (staged): $StageRoot"
+    Write-Host "Output: $outExe"
 
-    $batch = @"
-@echo off
-setlocal
-call "$vcvars" || exit /b 1
-cd /d "$workDir" || exit /b 1
-rc.exe /nologo /i"$includeDir" /i"$workDir" /fo"$resPath" "$rcPath" || exit /b 1
-cl.exe /nologo /O2 /DNDEBUG /W3 /DUNICODE /D_UNICODE /MD /I"$includeDir" /I"$workDir" /Fe:"$outExe" "$SetupSrc" /link /SUBSYSTEM:WINDOWS /MACHINE:X64 /DYNAMICBASE /NXCOMPAT /INCREMENTAL:NO /DEBUG:NONE /OPT:REF /OPT:ICF "$resPath" user32.lib shell32.lib
-exit /b %ERRORLEVEL%
-"@
-    $batPath = Join-Path $workDir 'build-setup.bat'
-    Set-Content -Path $batPath -Value $batch -Encoding ascii
-
-    Log-Group "Building clean MSVC Setup.exe (no Inno Setup)..."
-    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', "`"$batPath`"") -Wait -PassThru -NoNewWindow
-    if ( $proc.ExitCode -ne 0 ) {
-        throw "Setup.exe compile failed with exit code $($proc.ExitCode)"
+    # ISCC requires quoted /D values when paths or filenames contain spaces.
+    $argList = @(
+        "/DMyAppVersion=$ProductVersion"
+        "/DSourceDir=$StageRoot"
+        "/DOutputDir=$OutputDir"
+        "/DOutputBaseFilename=$SetupBaseName"
+        $iss
+    )
+    Write-Host ("ISCC args: " + ($argList -join ' '))
+    & $iscc @argList
+    if ( $LASTEXITCODE -ne 0 ) {
+        throw "ISCC.exe failed with exit code $LASTEXITCODE"
     }
     if ( ! ( Test-Path $outExe ) ) {
-        throw "Setup.exe was not created at $outExe"
+        throw "Inno Setup did not produce expected installer: $outExe"
     }
 
-    # Drop compiler junk from release/
-    Get-ChildItem -Path $workDir -ErrorAction SilentlyContinue | Out-Null
-    Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
-    Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.obj' -ErrorAction SilentlyContinue | Remove-Item -Force
-    Get-ChildItem -Path (Join-Path $ProjectRoot 'release') -Filter '*.pdb' -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like '*Setup*.pdb' -or $_.Name -like 'Vertical*' } |
-        Remove-Item -Force -ErrorAction SilentlyContinue
+    Write-Host "Inno Setup installer ready: $outExe ($((Get-Item $outExe).Length) bytes)"
     Log-Group
+    return $outExe
 }
 
 function Package {
@@ -166,20 +176,19 @@ function Package {
     $ProductVersion = $BuildSpec.version
     $DisplayName = if ($BuildSpec.displayName) { [string]$BuildSpec.displayName } else { 'Vertical Shorts Plugin' }
 
-    # Official public artifact basenames (no extension).
-    # GitHub Release asset names cannot contain spaces (they become "."),
-    # so ship hyphenated versioned names that GitHub preserves exactly:
-    #   Vertical-Shorts-Plugin-1.0.5.zip
-    #   Vertical-Shorts-Plugin-1.0.5-Setup.exe
+    # Official public artifact names:
+    #   Vertical-Shorts-Plugin-1.0.5.zip  (hyphenated for GitHub Release URLs)
+    #   Vertical Shorts Plugin 1.0.5 Setup.exe  (exact product installer name)
     $OutputName = "${ProductName}-${ProductVersion}-windows-${Target}"
     $OfficialZipBase = "Vertical-Shorts-Plugin-${ProductVersion}"
-    $SetupName = "Vertical-Shorts-Plugin-${ProductVersion}-Setup"
+    $SetupBaseName = "Vertical Shorts Plugin ${ProductVersion} Setup"
 
     $ReleaseDir = "${ProjectRoot}/release/${Configuration}"
+    $StageRoot = "${ProjectRoot}/release/staging"
+    $ReleaseOut = "${ProjectRoot}/release"
 
     if (Test-Path "${ProjectRoot}/INSTALL-WINDOWS.txt") {
         Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" "${ReleaseDir}/INSTALL.txt"
-        # Also ship INSTALL.txt inside the plugin tree (Setup embeds + extracts it there).
         $pluginInstall = Join-Path $ReleaseDir 'obs-shorts-vertical\INSTALL.txt'
         if (Test-Path (Split-Path -Parent $pluginInstall)) {
             Copy-Item -Force "${ProjectRoot}/INSTALL-WINDOWS.txt" $pluginInstall
@@ -190,7 +199,6 @@ function Package {
         Remove-Item -Force -ErrorAction SilentlyContinue
 
     # Platform icons are embedded in the DLL via Qt resources (vsp-resources.qrc).
-    # Do not ship a duplicate on-disk icon tree in end-user packages.
     $iconsDir = Join-Path $ReleaseDir 'obs-shorts-vertical\data\icons'
     if (Test-Path $iconsDir) {
         Remove-Item -Recurse -Force $iconsDir
@@ -217,23 +225,51 @@ function Package {
             "${ProjectRoot}/release/ShortsVertical-*"
             "${ProjectRoot}/release/Package"
             "${ProjectRoot}/release/setup-build"
+            "${ProjectRoot}/release/staging"
         )
     }
     Remove-Item @RemoveArgs -Recurse
 
-    Log-Group "Archiving ${DisplayName} zip package..."
+    # --- 1) Verify built plugin payload ---
+    Log-Group "Verifying built plugin payload..."
+    $pluginRoot = Join-Path $ReleaseDir 'obs-shorts-vertical'
+    $installTxt = Join-Path $ReleaseDir 'INSTALL.txt'
+    Assert-PluginPayload -PluginRoot $pluginRoot -InstallTxt $installTxt
+    Log-Group
+
+    # --- 2) Stage final payload (never package from source tree) ---
+    Log-Group "Staging installer payload..."
+    $stagedPlugin = New-InstallerStaging -ProjectRoot $ProjectRoot -ReleaseDir $ReleaseDir -StageRoot $StageRoot
+    Assert-PluginPayload -PluginRoot $stagedPlugin -InstallTxt (Join-Path $stagedPlugin 'INSTALL.txt')
+    Write-Host "Staged plugin tree: $stagedPlugin"
+    Log-Group
+
+    # --- 3) Zip from staged payload ---
+    Log-Group "Archiving ${DisplayName} zip package from staging..."
+    $zipStaging = Join-Path $ReleaseOut 'zip-staging'
+    if ( Test-Path $zipStaging ) { Remove-Item -Recurse -Force $zipStaging }
+    New-Item -ItemType Directory -Path $zipStaging | Out-Null
+    Copy-Item -Recurse -Force $stagedPlugin (Join-Path $zipStaging 'obs-shorts-vertical')
+    Copy-Item -Force (Join-Path $StageRoot 'INSTALL.txt') (Join-Path $zipStaging 'INSTALL.txt')
+
     $CompressArgs = @{
-        Path = (Get-ChildItem -Path $ReleaseDir -Exclude "${OutputName}*.*", "${OfficialZipBase}*.*", "*.exe")
+        Path = (Get-ChildItem -Path $zipStaging)
         CompressionLevel = 'Optimal'
         DestinationPath = "${ProjectRoot}/release/${OutputName}.zip"
         Verbose = ($Env:CI -ne $null)
     }
     Compress-Archive -Force @CompressArgs
-    # Official public zip name (hyphenated, versioned)
     Copy-Item -Force "${ProjectRoot}/release/${OutputName}.zip" "${ProjectRoot}/release/${OfficialZipBase}.zip"
+    Remove-Item -Recurse -Force $zipStaging -ErrorAction SilentlyContinue
     Log-Group
 
-    Build-CleanSetupExe -ProjectRoot $ProjectRoot -ReleaseDir $ReleaseDir -ProductVersion $ProductVersion -SetupName $SetupName
+    # --- 4) Package staged payload with Inno Setup ---
+    Build-InnoSetupInstaller `
+        -ProjectRoot $ProjectRoot `
+        -StageRoot $StageRoot `
+        -ProductVersion $ProductVersion `
+        -SetupBaseName $SetupBaseName `
+        -OutputDir $ReleaseOut | Out-Null
 }
 
 Package

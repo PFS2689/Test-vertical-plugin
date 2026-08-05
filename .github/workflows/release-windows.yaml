@@ -38,7 +38,6 @@ jobs:
           set -euo pipefail
           shopt -s extglob
           RAW_TAG="${GITHUB_REF_NAME}"
-          # Official tags use a leading "v" (e.g. v1.0.5); strip it for version compares.
           VERSION="${RAW_TAG#v}"
           case "${VERSION}" in
             +([0-9]).+([0-9]).+([0-9]) )
@@ -56,7 +55,6 @@ jobs:
           esac
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
-          # Tag must match buildspec.json version (allow -betaN / -rcN suffix).
           if [[ -f buildspec.json ]]; then
             spec_ver=$(python3 -c 'import json; print(json.load(open("buildspec.json"))["version"])')
             tag_base="${VERSION%%-*}"
@@ -65,6 +63,10 @@ jobs:
               exit 1
             fi
           fi
+          # Exact local/artifact installer basename (spaces). GitHub download URLs may
+          # normalize spaces to dots (Vertical.Shorts.Plugin.1.0.5.Setup.exe).
+          echo "setup_name=Vertical Shorts Plugin ${VERSION} Setup.exe" >> "$GITHUB_OUTPUT"
+          echo "setup_asset_url=Vertical.Shorts.Plugin.${VERSION}.Setup.exe" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
         if: steps.check.outputs.valid == 'true'
@@ -77,22 +79,27 @@ jobs:
         if: steps.check.outputs.valid == 'true'
         env:
           VERSION: ${{ steps.check.outputs.version }}
+          SETUP_NAME: ${{ steps.check.outputs.setup_name }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          # GitHub Release asset names cannot contain spaces (they become ".").
-          # Official shipping names are hyphenated and versioned.
-          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
           ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
+
+          echo "Looking for installer: ${SETUP_NAME}"
+          ls -la dist || true
 
           if [[ -f "dist/${SETUP_NAME}" ]]; then
             cp "dist/${SETUP_NAME}" "release-assets/${SETUP_NAME}"
-          elif [[ -f dist/Vertical-Shorts-Plugin-Setup.exe ]]; then
-            cp dist/Vertical-Shorts-Plugin-Setup.exe "release-assets/${SETUP_NAME}"
           else
-            echo "ERROR: Setup.exe not found in artifacts" >&2
-            ls -la dist || true
-            exit 1
+            # Fallback: any matching Setup.exe produced by packaging
+            found="$(find dist -maxdepth 1 -type f -name 'Vertical Shorts Plugin * Setup.exe' | head -n1 || true)"
+            if [[ -n "${found}" ]]; then
+              cp "${found}" "release-assets/${SETUP_NAME}"
+            else
+              echo "ERROR: Inno Setup installer not found in artifacts" >&2
+              find dist -type f | head -100 || true
+              exit 1
+            fi
           fi
 
           if [[ -f "dist/${ZIP_NAME}" ]]; then
@@ -110,7 +117,7 @@ jobs:
           test -f "release-assets/${SETUP_NAME}"
           test -f "release-assets/${ZIP_NAME}"
 
-          # Zip must only contain expected OBS plugin files (no nested exe/scripts)
+          # Zip must only contain expected OBS plugin files
           mkdir -p /tmp/pkgcheck
           unzip -l "release-assets/${ZIP_NAME}"
           unzip -q "release-assets/${ZIP_NAME}" -d /tmp/pkgcheck
@@ -119,7 +126,6 @@ jobs:
             find /tmp/pkgcheck -type f
             exit 1
           fi
-          # Allowlist: everything must live under obs-shorts-vertical/ (plus optional root INSTALL.txt)
           while IFS= read -r -d '' f; do
             rel="${f#/tmp/pkgcheck/}"
             case "$rel" in
@@ -132,16 +138,21 @@ jobs:
           done < <(find /tmp/pkgcheck -type f -print0)
           test -f /tmp/pkgcheck/obs-shorts-vertical/bin/64bit/obs-shorts-vertical.dll
 
-          # Setup.exe must be a PE binary, not an Inno Setup stub, and a reasonable size
+          # Setup.exe must be a PE Inno Setup installer
           file "release-assets/${SETUP_NAME}" | tee /tmp/setup-file.txt
           grep -qiE 'PE32|executable|MS Windows' /tmp/setup-file.txt
-          if strings "release-assets/${SETUP_NAME}" | grep -qi 'Inno Setup Setup Data'; then
-            echo "ERROR: Setup.exe still looks like an Inno Setup installer" >&2
+          if ! strings "release-assets/${SETUP_NAME}" | grep -qi 'Inno Setup'; then
+            echo "ERROR: Setup.exe is not an Inno Setup installer" >&2
+            exit 1
+          fi
+          # Reject leftover custom MSVC RCDATA stub markers if any slip through
+          if strings "release-assets/${SETUP_NAME}" | grep -qi 'Missing embedded plugin payload'; then
+            echo "ERROR: custom MSVC installer stub detected — refusing to publish" >&2
             exit 1
           fi
           size=$(stat -c%s "release-assets/${SETUP_NAME}")
-          # Custom MSVC installer embeds the DLL (~100KB+) plus a small stub
-          if [[ "$size" -lt 40000 || "$size" -gt 5000000 ]]; then
+          # Inno Setup with LZMA payload is typically >100KB for this plugin
+          if [[ "$size" -lt 50000 || "$size" -gt 50000000 ]]; then
             echo "ERROR: Setup.exe size looks wrong: $size bytes" >&2
             exit 1
           fi
@@ -152,15 +163,14 @@ jobs:
         if: steps.check.outputs.valid == 'true'
         env:
           VERSION: ${{ steps.check.outputs.version }}
+          SETUP_NAME: ${{ steps.check.outputs.setup_name }}
         run: |
           set -euo pipefail
-          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
           ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
 
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq clamav
           sudo systemctl stop clamav-freshclam 2>/dev/null || true
-          # Fail the release if signature databases cannot be refreshed.
           if ! sudo freshclam --stdout; then
             echo "ERROR: freshclam failed — refusing to publish without current signatures" >&2
             exit 1
@@ -170,10 +180,8 @@ jobs:
           clamscan -r --stdout --max-filesize=100M --max-scansize=200M release-assets | tee clamav-report.txt
           status=${PIPESTATUS[0]}
           set -e
-          # clamscan: 0 = clean, 1 = infected, 2+ = error
           if [[ "$status" -eq 1 ]]; then
             echo "ERROR: ClamAV found malware — aborting release" >&2
-            echo "--- clamav-report.txt ---"
             cat clamav-report.txt
             exit 1
           elif [[ "$status" -ge 2 ]]; then
@@ -183,9 +191,7 @@ jobs:
           fi
           echo "CLAMAV_CLEAN=true" >> "$GITHUB_ENV"
           echo "ClamAV: CLEAN"
-          # Keep ClamAV report in workflow logs only — do not attach to the public release.
 
-          # Official checksum file: only the two shipping binaries
           (
             cd release-assets
             rm -f SHA256SUMS SHA256SUMS.txt
@@ -197,9 +203,10 @@ jobs:
         if: steps.check.outputs.valid == 'true'
         env:
           VERSION: ${{ steps.check.outputs.version }}
+          SETUP_NAME: ${{ steps.check.outputs.setup_name }}
+          SETUP_ASSET_URL: ${{ steps.check.outputs.setup_asset_url }}
         run: |
           set -euo pipefail
-          SETUP_NAME="Vertical-Shorts-Plugin-${VERSION}-Setup.exe"
           ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
           {
             echo "## Vertical Shorts Plugin ${VERSION} (Windows)"
@@ -208,7 +215,7 @@ jobs:
             echo
             echo "### Download"
             echo
-            echo "- **Setup.exe (recommended):** [${SETUP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${SETUP_NAME})"
+            echo "- **Setup.exe (recommended):** [${SETUP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${SETUP_ASSET_URL})"
             echo "- **Manual ZIP:** [${ZIP_NAME}](https://github.com/${{ github.repository }}/releases/latest/download/${ZIP_NAME})"
             echo "- **Checksums:** [SHA256SUMS.txt](https://github.com/${{ github.repository }}/releases/latest/download/SHA256SUMS.txt)"
             echo
@@ -232,9 +239,9 @@ jobs:
             echo
             echo "### Safety analysis"
             echo "- **Windows Defender + ClamAV malware scans: CLEAN** (zip, Setup.exe, and DLL; release is blocked if anything is flagged)"
-            echo "- Setup.exe is a **custom MSVC Win32 installer** (not Inno Setup / NSIS)"
-            echo "- It only copies the plugin into \`%ProgramData%\\obs-studio\\plugins\` (Administrator / UAC required)"
-            echo "- No downloads, no Run-key changes, no bundled third-party stub"
+            echo "- Setup.exe is a **standard Inno Setup 6** installer"
+            echo "- It installs into \`%ProgramData%\\obs-studio\\plugins\\obs-shorts-vertical\` (Administrator / UAC required)"
+            echo "- Built from a staged Release plugin payload (not packaged from source)"
             echo "- Package payload: OBS plugin DLL + locale + INSTALL.txt"
             echo "- Built against **OBS Studio 32.2.1**"
             echo "- Source code: https://github.com/${{ github.repository }}"
@@ -274,6 +281,5 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
-          # release-assets/ contains only Setup.exe, zip, and SHA256SUMS.txt
           files: release-assets/*
           fail_on_unmatched_files: true

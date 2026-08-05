@@ -22,11 +22,12 @@ Includes:
 - Secure credential storage (Windows Credential Manager + DPAPI fallback)
 - Vertical recording, short/long clips, clip buffer readiness
 - Optional recording automation and hotkeys
-- Custom Setup.exe installing to `%ProgramData%\obs-studio\plugins` (OBS load path; UAC required)
+- **Inno Setup 6** installer (`Vertical Shorts Plugin 1.0.5 Setup.exe`) installing to `%ProgramData%\obs-studio\plugins` (OBS load path; UAC required)
 - Built against **OBS Studio 32.2.1** / obs-deps **2026-07-15**
 - MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
 - Authenticode signing when CI credentials are configured (Azure Artifact Signing or OV/EV PFX)
 - **Fix:** Video Capture Device sources now render on the Vertical Shorts canvas (OBS 32 PROGRAM canvas with ACTIVATE so cameras receive `activate_refs`; preview uses `obs_canvas_render`)
+- Replaced the former custom MSVC Win32 Setup stub with a standard Inno Setup pipeline (stage Release payload → ISCC)
 
 ---
 
@@ -56,5 +57,4 @@ These entries document work that was folded into official **1.0.5**. They are no
 ### Feature work later labeled 1.1.x / 1.0.x during development
 
 - Vertical Shorts dock UI redesign
-- Custom MSVC Setup.exe replacing Inno Setup
-- Defender false-positive mitigations for the installer stub
+- (Historical) Temporary custom MSVC Setup stub — **retired**; shipping installer is Inno Setup 6 again

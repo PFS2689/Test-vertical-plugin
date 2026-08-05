@@ -6,10 +6,11 @@ Professional Vertical Streaming Plugin for OBS Studio — vertical production do
 
 ## Download
 
-- **Setup.exe:** [Vertical-Shorts-Plugin-1.0.5-Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5-Setup.exe)
+- **Setup.exe:** [Vertical Shorts Plugin 1.0.5 Setup.exe](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical.Shorts.Plugin.1.0.5.Setup.exe)
 - **Zip:** [Vertical-Shorts-Plugin-1.0.5.zip](https://github.com/PFS2689/verticalshorts/releases/latest/download/Vertical-Shorts-Plugin-1.0.5.zip)
 - **Checksums:** [SHA256SUMS.txt](https://github.com/PFS2689/verticalshorts/releases/latest/download/SHA256SUMS.txt)
 - **Signing:** Production builds are Authenticode-signed (see [docs/SIGNING-WINDOWS.md](docs/SIGNING-WINDOWS.md))
+- **Installer:** Standard **Inno Setup 6** (see [docs/INSTALLER-WINDOWS.md](docs/INSTALLER-WINDOWS.md))
 
 ## UI overview
 
