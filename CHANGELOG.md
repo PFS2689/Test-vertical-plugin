@@ -26,6 +26,7 @@ Includes:
 - Built against **OBS Studio 32.2.1** / obs-deps **2026-07-15**
 - MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
 - Authenticode signing when CI credentials are configured (Azure Artifact Signing or OV/EV PFX)
+- **Fix:** Video Capture Device sources now render on the Vertical Shorts canvas (OBS 32 PROGRAM canvas with ACTIVATE so cameras receive `activate_refs`; preview uses `obs_canvas_render`)
 
 ---
 

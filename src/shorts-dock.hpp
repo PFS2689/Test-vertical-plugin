@@ -147,6 +147,8 @@ private:
 	void ApplyCanvasFromSettings();
 	void CreateView();
 	void DestroyView();
+	void AttachScenesToCanvas();
+	obs_scene_t *CreateVerticalScene(const char *name);
 	void SetCanvasSize(uint32_t width, uint32_t height);
 	void SetActiveScene(obs_scene_t *newScene, bool withTransition);
 	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;
@@ -159,6 +161,7 @@ private:
 	void EmitSceneUiChanged();
 	void EmitSourceUiChanged();
 	obs_source_t *EnsureVerticalTransitionSource(const QString &name);
+	obs_sceneitem_t *AddSourceToActiveScene(obs_source_t *source, bool fitIfSized);
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -198,10 +201,11 @@ private:
 	QString automationStatusText;
 	vsp::AutomationStatus automationStatus = vsp::AutomationStatus::Disabled;
 
-	obs_view_t *view = nullptr;
+	/* OBS 32 PROGRAM canvas: MAIN_VIEW activation so cameras/capture devices start. */
+	obs_canvas_t *canvas = nullptr;
 	video_t *video = nullptr;
 	obs_scene_t *scene = nullptr;
-	QMap<QString, OBSScene> verticalScenes; /* uuid -> private vertical scene */
+	QMap<QString, OBSScene> verticalScenes; /* uuid -> canvas-backed vertical scene */
 	QStringList sceneOrder;                 /* ordered uuids */
 
 	QString verticalTransitionName;

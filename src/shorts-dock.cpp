@@ -380,17 +380,11 @@ ShortsDock::~ShortsDock()
 		outputs->StopAll();
 
 	if (scene) {
-		obs_source_t *src = obs_scene_get_source(scene);
-		if (src)
-			obs_source_dec_showing(src);
-	}
-
-	DestroyView();
-
-	if (scene) {
 		obs_scene_release(scene);
 		scene = nullptr;
 	}
+
+	DestroyView();
 
 	verticalTransition = nullptr;
 	transitionPreviewScene = nullptr;
@@ -488,7 +482,7 @@ void ShortsDock::EnsureDefaultVerticalScene()
 	if (!verticalScenes.isEmpty())
 		return;
 
-	obs_scene_t *created = obs_scene_create_private("Vertical Scene");
+	obs_scene_t *created = CreateVerticalScene("Vertical Scene");
 	if (!created)
 		return;
 	obs_source_t *src = obs_scene_get_source(created);
@@ -533,38 +527,92 @@ QString ShortsDock::ActiveSceneUuid() const
 
 void ShortsDock::CreateView()
 {
-	DestroyView();
-
-	view = obs_view_create();
-	if (!view) {
-		blog(LOG_WARNING, "[obs-shorts-vertical] obs_view_create failed");
-		return;
-	}
-
 	struct obs_video_info ovi;
 	if (!obs_get_video_info(&ovi)) {
 		blog(LOG_WARNING, "[obs-shorts-vertical] obs_get_video_info failed");
 		return;
 	}
 
-	struct obs_video_info viewOvi = ovi;
-	viewOvi.base_width = verticalWidth;
-	viewOvi.base_height = verticalHeight;
-	viewOvi.output_width = verticalWidth;
-	viewOvi.output_height = verticalHeight;
-	video = obs_view_add2(view, &viewOvi);
+	ovi.base_width = verticalWidth;
+	ovi.base_height = verticalHeight;
+	ovi.output_width = verticalWidth;
+	ovi.output_height = verticalHeight;
+
+	/* PROGRAM = ACTIVATE | MIX_AUDIO | SCENE_REF — ACTIVATE uses MAIN_VIEW so
+	 * Video Capture Devices and other inputs receive activate_refs when visible. */
+	if (!canvas) {
+		canvas = obs_canvas_create_private("Vertical Shorts", &ovi, PROGRAM);
+		if (!canvas) {
+			blog(LOG_ERROR, "[obs-shorts-vertical] obs_canvas_create_private failed");
+			video = nullptr;
+			return;
+		}
+		blog(LOG_INFO, "[obs-shorts-vertical] Vertical PROGRAM canvas created %ux%u", verticalWidth,
+		     verticalHeight);
+	} else {
+		struct obs_video_info cur = {};
+		bool needReset = !obs_canvas_has_video(canvas);
+		if (!needReset && obs_canvas_get_video_info(canvas, &cur)) {
+			needReset = cur.base_width != verticalWidth || cur.base_height != verticalHeight ||
+				    cur.output_width != verticalWidth || cur.output_height != verticalHeight;
+		} else if (!needReset) {
+			needReset = true;
+		}
+		if (needReset) {
+			if (!obs_canvas_reset_video(canvas, &ovi))
+				blog(LOG_WARNING, "[obs-shorts-vertical] obs_canvas_reset_video failed");
+			else
+				blog(LOG_INFO, "[obs-shorts-vertical] Vertical canvas reset to %ux%u", verticalWidth,
+				     verticalHeight);
+		}
+	}
+
+	video = obs_canvas_get_video(canvas);
 	if (!video)
-		blog(LOG_WARNING, "[obs-shorts-vertical] obs_view_add2 failed");
+		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical canvas has no video output");
+
+	AttachScenesToCanvas();
 }
 
 void ShortsDock::DestroyView()
 {
-	if (view) {
-		obs_view_remove(view);
-		obs_view_destroy(view);
-		view = nullptr;
-		video = nullptr;
+	if (canvas) {
+		obs_canvas_set_channel(canvas, 0, nullptr);
+		obs_canvas_remove(canvas);
+		obs_canvas_release(canvas);
+		canvas = nullptr;
 	}
+	video = nullptr;
+}
+
+void ShortsDock::AttachScenesToCanvas()
+{
+	if (!canvas)
+		return;
+
+	for (auto it = verticalScenes.begin(); it != verticalScenes.end(); ++it) {
+		obs_scene_t *sc = it.value();
+		if (!sc)
+			continue;
+		obs_source_t *src = obs_scene_get_source(sc);
+		if (!src)
+			continue;
+		OBSCanvasAutoRelease owned = obs_source_get_canvas(src);
+		if (owned == canvas)
+			continue;
+		obs_canvas_move_scene(sc, canvas);
+		blog(LOG_INFO, "[obs-shorts-vertical] Moved scene '%s' onto Vertical Shorts canvas",
+		     obs_source_get_name(src));
+	}
+}
+
+obs_scene_t *ShortsDock::CreateVerticalScene(const char *name)
+{
+	if (!canvas)
+		CreateView();
+	if (!canvas)
+		return nullptr;
+	return obs_canvas_scene_create(canvas, name);
 }
 
 void ShortsDock::SetCanvasSize(uint32_t width, uint32_t height)
@@ -573,15 +621,15 @@ void ShortsDock::SetCanvasSize(uint32_t width, uint32_t height)
 		width = 2;
 	if (height < 2)
 		height = 2;
-	if (verticalWidth == width && verticalHeight == height && view && video)
+	if (verticalWidth == width && verticalHeight == height && canvas && video)
 		return;
 	verticalWidth = width;
 	verticalHeight = height;
 	CreateView();
 	if (outputs)
 		outputs->SetVideo(video);
-	if (view && scene)
-		obs_view_set_source(view, 0, obs_scene_get_source(scene));
+	if (canvas && scene)
+		obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
 }
 
 void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool withTransition)
@@ -593,34 +641,35 @@ void ShortsDock::SetActiveScene(obs_scene_t *newScene, bool withTransition)
 	obs_source_t *newSrc = newScene ? obs_scene_get_source(newScene) : nullptr;
 
 	if (scene) {
-		if (oldSrc)
-			obs_source_dec_showing(oldSrc);
 		obs_scene_release(scene);
 		scene = nullptr;
 	}
 
-	if (newScene) {
+	if (newScene)
 		scene = obs_scene_get_ref(newScene);
-		if (scene) {
-			obs_source_t *cur = obs_scene_get_source(scene);
-			if (cur)
-				obs_source_inc_showing(cur);
-		}
-	}
 
-	if (view) {
+	/* Channel set on a PROGRAM canvas activates+shows the tree (MAIN_VIEW).
+	 * Do not also call obs_source_inc_showing — that double-counts show_refs. */
+	if (canvas) {
 		if (withTransition && oldSrc && newSrc && verticalTransitionDurationMs > 0) {
 			obs_source_t *tr = EnsureVerticalTransitionSource(verticalTransitionName);
 			if (tr) {
 				obs_transition_set(tr, oldSrc);
-				obs_view_set_source(view, 0, tr);
+				obs_canvas_set_channel(canvas, 0, tr);
 				obs_transition_start(tr, OBS_TRANSITION_MODE_AUTO, verticalTransitionDurationMs, newSrc);
 			} else {
-				obs_view_set_source(view, 0, newSrc);
+				obs_canvas_set_channel(canvas, 0, newSrc);
 			}
 		} else {
-			obs_view_set_source(view, 0, newSrc);
+			obs_canvas_set_channel(canvas, 0, newSrc);
 		}
+	}
+
+	if (newSrc) {
+		blog(LOG_DEBUG,
+		     "[obs-shorts-vertical] Active vertical scene '%s' active=%d showing=%d canvas=%p video=%p",
+		     obs_source_get_name(newSrc), (int)obs_source_active(newSrc), (int)obs_source_showing(newSrc),
+		     (void *)canvas, (void *)video);
 	}
 
 	EmitSourceUiChanged();
@@ -720,7 +769,7 @@ void ShortsDock::RequestAddScene()
 	if (!ok || name.trimmed().isEmpty())
 		return;
 
-	obs_scene_t *created = obs_scene_create_private(name.trimmed().toUtf8().constData());
+	obs_scene_t *created = CreateVerticalScene(name.trimmed().toUtf8().constData());
 	if (!created)
 		return;
 	obs_source_t *src = obs_scene_get_source(created);
@@ -743,8 +792,17 @@ void ShortsDock::RequestRemoveScene()
 	if (QMessageBox::question(this, Translate("RemoveScene"), Translate("ConfirmRemoveScene")) != QMessageBox::Yes)
 		return;
 
+	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
 	if (scene && ActiveSceneUuid() == uuid)
 		SetActiveScene(nullptr, false);
+
+	if (sc) {
+		obs_source_t *src = obs_scene_get_source(sc);
+		if (canvas)
+			obs_canvas_scene_remove(sc);
+		if (src)
+			obs_source_remove(src);
+	}
 
 	verticalScenes.remove(uuid);
 	sceneOrder.removeAll(uuid);
@@ -769,9 +827,11 @@ void ShortsDock::RequestDuplicateScene()
 	if (!ok || name.trimmed().isEmpty())
 		return;
 
-	obs_scene_t *dup = obs_scene_duplicate(srcScene, name.trimmed().toUtf8().constData(), OBS_SCENE_DUP_PRIVATE_REFS);
+	obs_scene_t *dup = obs_scene_duplicate(srcScene, name.trimmed().toUtf8().constData(), OBS_SCENE_DUP_REFS);
 	if (!dup)
 		return;
+	if (canvas)
+		obs_canvas_move_scene(dup, canvas);
 	obs_source_t *dupSrc = obs_scene_get_source(dup);
 	const char *newUuid = dupSrc ? obs_source_get_uuid(dupSrc) : nullptr;
 	if (newUuid && *newUuid) {
@@ -846,6 +906,8 @@ void ShortsDock::RequestAddSource()
 			return;
 	}
 
+	/* Prefer sharing an existing source (avoids opening the same USB camera twice).
+	 * Also allow creating a new Video Capture Device when none exist yet. */
 	std::vector<std::string> names;
 	std::vector<OBSSource> sources;
 	struct EnumData {
@@ -867,12 +929,9 @@ void ShortsDock::RequestAddSource()
 		},
 		&data);
 
-	if (names.empty()) {
-		QMessageBox::information(this, Translate("AddSource"), Translate("NoSources"));
-		return;
-	}
-
 	QStringList items;
+	const QString createVcd = Translate("CreateVideoCaptureDevice");
+	items << createVcd;
 	for (const auto &n : names)
 		items << QString::fromUtf8(n.c_str());
 
@@ -882,14 +941,95 @@ void ShortsDock::RequestAddSource()
 	if (!ok || chosen.isEmpty())
 		return;
 
+	if (chosen == createVcd) {
+#ifdef _WIN32
+		const char *prefer = "dshow_input";
+#elif defined(__APPLE__)
+		const char *prefer = "av_capture_input";
+#else
+		const char *prefer = "v4l2_input";
+#endif
+		const char *id = obs_get_latest_input_type_id(prefer);
+		if (!id || !*id)
+			id = prefer;
+		if (!obs_source_get_display_name(id)) {
+			QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
+			return;
+		}
+		QString placeHolder = QString::fromUtf8(obs_source_get_display_name(id));
+		if (placeHolder.isEmpty())
+			placeHolder = QStringLiteral("Video Capture Device");
+		QString text = placeHolder;
+		int i = 2;
+		OBSSourceAutoRelease existing = obs_get_source_by_name(text.toUtf8().constData());
+		while (existing) {
+			text = QStringLiteral("%1 %2").arg(placeHolder).arg(i++);
+			existing = obs_get_source_by_name(text.toUtf8().constData());
+		}
+
+		/* Single public source instance — never create a second capture for the same device here. */
+		obs_source_t *created = obs_source_create(id, text.toUtf8().constData(), nullptr, nullptr);
+		if (!created) {
+			QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
+			return;
+		}
+		AddSourceToActiveScene(created, true);
+		if (obs_source_configurable(created))
+			obs_frontend_open_source_properties(created);
+		obs_source_release(created);
+		EmitSourceUiChanged();
+		return;
+	}
+
 	for (size_t i = 0; i < names.size(); i++) {
 		if (chosen != QString::fromUtf8(names[i].c_str()))
 			continue;
-		/* Add into the vertical scene only — never touch horizontal production. */
-		obs_scene_add(scene, sources[i]);
+		AddSourceToActiveScene(sources[i], true);
 		break;
 	}
 	EmitSourceUiChanged();
+}
+
+obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool fitIfSized)
+{
+	if (!scene || !source)
+		return nullptr;
+
+	obs_sceneitem_t *item = obs_scene_add(scene, source);
+	if (!item) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] obs_scene_add failed for '%s'", obs_source_get_name(source));
+		return nullptr;
+	}
+
+	obs_sceneitem_set_visible(item, true);
+	obs_scene_enum_items(scene, ClearSelection, nullptr);
+	obs_sceneitem_select(item, true);
+
+	const uint32_t sw = obs_source_get_width(source);
+	const uint32_t sh = obs_source_get_height(source);
+	if (fitIfSized && sw > 0 && sh > 0) {
+		const float scale = std::min(float(verticalWidth) / float(sw), float(verticalHeight) / float(sh));
+		vec2 s;
+		vec2_set(&s, scale, scale);
+		obs_sceneitem_set_scale(item, &s);
+		vec2 pos;
+		vec2_set(&pos, (float(verticalWidth) - float(sw) * scale) * 0.5f,
+			 (float(verticalHeight) - float(sh) * scale) * 0.5f);
+		obs_sceneitem_set_pos(item, &pos);
+	}
+
+	/* Ensure PROGRAM channel is the active vertical scene so ACTIVATE reaches this source. */
+	if (canvas && scene)
+		obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+
+	blog(LOG_INFO,
+	     "[obs-shorts-vertical] Added '%s' (%s) to vertical scene: item_visible=%d "
+	     "source_active=%d source_showing=%d source_enabled=%d size=%ux%u canvas=%p video=%p",
+	     obs_source_get_name(source), obs_source_get_id(source), (int)obs_sceneitem_visible(item),
+	     (int)obs_source_active(source), (int)obs_source_showing(source), (int)obs_source_enabled(source), sw, sh,
+	     (void *)canvas, (void *)video);
+
+	return item;
 }
 
 void ShortsDock::RequestRemoveSource()
@@ -1171,14 +1311,14 @@ void ShortsDock::RequestSetTransitionDuration(int ms)
 
 void ShortsDock::RequestPreviewTransition()
 {
-	if (!scene || !view)
+	if (!scene || !canvas)
 		return;
 	obs_source_t *cur = obs_scene_get_source(scene);
 	obs_source_t *tr = EnsureVerticalTransitionSource(verticalTransitionName);
 	if (!tr || !cur)
 		return;
 	obs_transition_set(tr, cur);
-	obs_view_set_source(view, 0, tr);
+	obs_canvas_set_channel(canvas, 0, tr);
 	obs_transition_start(tr, OBS_TRANSITION_MODE_AUTO, verticalTransitionDurationMs, cur);
 }
 
@@ -1349,8 +1489,8 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 		CreateView();
 		if (outputs)
 			outputs->SetVideo(video);
-		if (view && scene)
-			obs_view_set_source(view, 0, obs_scene_get_source(scene));
+		if (canvas && scene)
+			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
 	}
 
 	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
@@ -1487,6 +1627,7 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 
 	LoadHotkeys(data);
 	ApplyCanvasFromSettings();
+	CreateView();
 
 	if (outputs)
 		outputs->ApplySettings(settings);
@@ -1514,6 +1655,8 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 				continue;
 			obs_scene_t *loaded = obs_scene_from_source(src);
 			if (loaded) {
+				if (canvas)
+					obs_canvas_move_scene(loaded, canvas);
 				const char *realUuid = obs_source_get_uuid(src);
 				const QString key = realUuid && *realUuid ? QString::fromUtf8(realUuid)
 									  : QString::fromUtf8(uuid ? uuid : "");
@@ -1609,7 +1752,7 @@ void ShortsDock::DrawCallback(void *data, uint32_t cx, uint32_t cy)
 
 void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 {
-	if (!scene)
+	if (!scene && !canvas)
 		return;
 
 	const uint32_t canvasW = verticalWidth;
@@ -1622,9 +1765,14 @@ void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 	gs_ortho(0.0f, (float)canvasW, 0.0f, (float)canvasH, -100.0f, 100.0f);
 	gs_set_viewport(previewX, previewY, (int)(previewScale * canvasW), (int)(previewScale * canvasH));
 
-	obs_source_t *source = obs_scene_get_source(scene);
-	if (source)
-		obs_source_video_render(source);
+	/* Render the PROGRAM canvas channel (scene or in-flight transition). */
+	if (canvas)
+		obs_canvas_render(canvas);
+	else if (scene) {
+		obs_source_t *source = obs_scene_get_source(scene);
+		if (source)
+			obs_source_video_render(source);
+	}
 
 	DrawSceneEditing();
 
@@ -1634,6 +1782,9 @@ void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 
 void ShortsDock::DrawSceneEditing()
 {
+	if (!scene)
+		return;
+
 	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
 	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
 
