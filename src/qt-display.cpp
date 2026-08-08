@@ -1,11 +1,18 @@
 #include "qt-display.hpp"
 #include "display-helpers.hpp"
 
+#include <obs-module.h>
+
 #include <QGuiApplication>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QScreen>
 #include <QShowEvent>
 #include <QWindow>
+
+#include <algorithm>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -43,6 +50,16 @@ OBSQTDisplay::OBSQTDisplay(QWidget *parent, Qt::WindowFlags flags) : QWidget(par
 	setAttribute(Qt::WA_DontCreateNativeAncestors);
 	setAttribute(Qt::WA_NativeWindow);
 
+	/* Force native window creation before connecting to QWindow signals. */
+	(void)winId();
+
+	/* Dark widget palette — if OBS display is not ready, never show Qt white. */
+	QPalette pal = palette();
+	pal.setColor(QPalette::Window, QColor(0x28, 0x28, 0x28));
+	pal.setColor(QPalette::Base, QColor(0x28, 0x28, 0x28));
+	setPalette(pal);
+	setAutoFillBackground(true);
+
 	auto windowVisible = [this](bool visible) {
 		if (!visible) {
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -52,7 +69,7 @@ OBSQTDisplay::OBSQTDisplay(QWidget *parent, Qt::WindowFlags flags) : QWidget(par
 		}
 
 		if (!display) {
-			CreateDisplay();
+			CreateDisplay(true);
 		} else {
 			QSize size = GetPixelSize(this);
 			obs_display_resize(display, size.width(), size.height());
@@ -60,13 +77,19 @@ OBSQTDisplay::OBSQTDisplay(QWidget *parent, Qt::WindowFlags flags) : QWidget(par
 	};
 
 	auto screenChanged = [this](QScreen *) {
-		CreateDisplay();
-		QSize size = GetPixelSize(this);
-		obs_display_resize(display, size.width(), size.height());
+		CreateDisplay(true);
+		if (display) {
+			QSize size = GetPixelSize(this);
+			obs_display_resize(display, size.width(), size.height());
+		}
 	};
 
-	connect(windowHandle(), &QWindow::visibleChanged, windowVisible);
-	connect(windowHandle(), &QWindow::screenChanged, screenChanged);
+	if (windowHandle()) {
+		connect(windowHandle(), &QWindow::visibleChanged, windowVisible);
+		connect(windowHandle(), &QWindow::screenChanged, screenChanged);
+	} else {
+		blog(LOG_ERROR, "[obs-shorts-vertical] OBSQTDisplay: windowHandle() is null after winId()");
+	}
 }
 
 QColor OBSQTDisplay::GetDisplayBackgroundColor() const
@@ -95,8 +118,10 @@ bool QTToGSWindow(QWindow *window, gs_window &gswindow)
 
 #ifdef _WIN32
 	gswindow.hwnd = (HWND)window->winId();
+	success = gswindow.hwnd != nullptr;
 #elif defined(__APPLE__)
 	gswindow.view = (id)window->winId();
+	success = gswindow.view != nullptr;
 #else
 	switch (obs_get_nix_platform()) {
 	case OBS_NIX_PLATFORM_X11_EGL:
@@ -125,32 +150,88 @@ bool QTToGSWindow(QWindow *window, gs_window &gswindow)
 
 void OBSQTDisplay::CreateDisplay(bool force)
 {
-	if (display)
+	if (display || destroying)
 		return;
 
-	if (!windowHandle()->isExposed() && !force)
+	if (!windowHandle()) {
+		(void)winId();
+		if (!windowHandle()) {
+			blog(LOG_ERROR, "[obs-shorts-vertical] CreateDisplay: no QWindow/native handle");
+			return;
+		}
+	}
+
+	if (!windowHandle()->isExposed() && !force) {
+		if (!createLogged) {
+			blog(LOG_INFO, "[obs-shorts-vertical] CreateDisplay: window not exposed yet (will retry)");
+			createLogged = true;
+		}
 		return;
+	}
 
 	QSize size = GetPixelSize(this);
+	if (size.width() < 2)
+		size.setWidth(2);
+	if (size.height() < 2)
+		size.setHeight(2);
 
 	gs_init_data info = {};
 	info.cx = size.width();
 	info.cy = size.height();
-	/* Match OBS frontend qt-display (GS_RGBA) for reliable dock previews. */
-	info.format = GS_RGBA;
+	/* OBS Studio 32 frontend qt-display uses GS_BGRA — keep parity. */
+	info.format = GS_BGRA;
 	info.zsformat = GS_ZS_NONE;
 
-	if (!QTToGSWindow(windowHandle(), info.window))
+	if (!QTToGSWindow(windowHandle(), info.window)) {
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] CreateDisplay: QTToGSWindow failed (exposed=%d size=%dx%d)",
+		     (int)windowHandle()->isExposed(), size.width(), size.height());
 		return;
+	}
 
 	display = obs_display_create(&info, backgroundColor);
+	if (!display) {
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] obs_display_create FAILED (size=%dx%d format=GS_BGRA bg=0x%08X)",
+		     size.width(), size.height(), backgroundColor);
+		return;
+	}
+
+	obs_display_set_enabled(display, true);
+	obs_display_set_background_color(display, backgroundColor);
+
+	blog(LOG_INFO,
+	     "[obs-shorts-vertical] obs_display_create OK: size=%dx%d enabled=%d bg=0x%08X hwnd/view ready",
+	     size.width(), size.height(), (int)obs_display_enabled(display), backgroundColor);
+
+	/* Once OBS owns the surface, stop Qt from painting over it. */
+	setAutoFillBackground(false);
+
 	emit DisplayCreated(this);
 }
 
 void OBSQTDisplay::paintEvent(QPaintEvent *event)
 {
-	CreateDisplay();
+	CreateDisplay(false);
+
+	if (!display) {
+		/* Never leave a white Qt fallback. Dark OBS-style fill until display attaches. */
+		QPainter p(this);
+		p.fillRect(rect(), QColor(0x28, 0x28, 0x28));
+		return;
+	}
+
 	QWidget::paintEvent(event);
+}
+
+void OBSQTDisplay::showEvent(QShowEvent *event)
+{
+	QWidget::showEvent(event);
+	CreateDisplay(true);
+	if (display) {
+		QSize size = GetPixelSize(this);
+		obs_display_resize(display, std::max(2, size.width()), std::max(2, size.height()));
+	}
 }
 
 void OBSQTDisplay::moveEvent(QMoveEvent *event)
@@ -181,11 +262,11 @@ bool OBSQTDisplay::nativeEvent(const QByteArray &, void *message, long *)
 void OBSQTDisplay::resizeEvent(QResizeEvent *event)
 {
 	QWidget::resizeEvent(event);
-	CreateDisplay();
+	CreateDisplay(true);
 
 	if (isVisible() && display) {
 		QSize size = GetPixelSize(this);
-		obs_display_resize(display, size.width(), size.height());
+		obs_display_resize(display, std::max(2, size.width()), std::max(2, size.height()));
 	}
 
 	emit DisplayResized();
@@ -193,7 +274,10 @@ void OBSQTDisplay::resizeEvent(QResizeEvent *event)
 
 QPaintEngine *OBSQTDisplay::paintEngine() const
 {
-	return nullptr;
+	/* When the OBS display owns the HWND, disable Qt painting.
+	 * Before display creation, allow Qt so we can paint a dark fallback
+	 * instead of the default white native window. */
+	return display ? nullptr : QWidget::paintEngine();
 }
 
 void OBSQTDisplay::OnMove()

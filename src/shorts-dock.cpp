@@ -31,6 +31,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
@@ -466,6 +467,7 @@ void ShortsDock::BuildUI()
 	setObjectName(QStringLiteral("ShortsDock"));
 	setStyleSheet(QStringLiteral(
 		"#ShortsDock { background-color: #1f1f1f; }"
+		"#VerticalShortsPreview { background-color: #282828; }"
 		"#vsControlsBar, #vsPresetBar { background-color: #1f1f1f; }"
 		"#vsControlsBar QPushButton {"
 		"  font-size: 14px;"
@@ -501,9 +503,9 @@ void ShortsDock::BuildUI()
 	root->setSpacing(2);
 
 	preview = new OBSQTDisplay(this);
+	preview->setObjectName(QStringLiteral("VerticalShortsPreview"));
 	preview->setMinimumSize(120, 120);
 	preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	preview->setAutoFillBackground(false);
 	preview->setMouseTracking(true);
 	/* OBS-style dark preview clear color (never white). */
 	preview->SetDisplayBackgroundColor(QColor(0x28, 0x28, 0x28));
@@ -511,17 +513,16 @@ void ShortsDock::BuildUI()
 	preview->installEventFilter(previewEventFilter.get());
 
 	auto addDrawCallback = [this]() {
-		obs_display_t *display = preview->GetDisplay();
+		obs_display_t *display = preview ? preview->GetDisplay() : nullptr;
 		if (display) {
-			obs_display_set_background_color(display, 0xFF282828);
-			/* Displays start enabled; force-enable in case a prior path disabled it. */
+			obs_display_set_background_color(display, GREY_COLOR_BACKGROUND);
 			obs_display_set_enabled(display, true);
 			obs_display_add_draw_callback(display, DrawCallback, this);
 			blog(LOG_INFO,
-			     "[obs-shorts-vertical] Preview display created: enabled=%d size will drive draw callbacks",
+			     "[obs-shorts-vertical] Preview display ready: enabled=%d draw_callback=registered",
 			     (int)obs_display_enabled(display));
 		} else {
-			blog(LOG_WARNING, "[obs-shorts-vertical] DisplayCreated fired but GetDisplay() is null");
+			blog(LOG_ERROR, "[obs-shorts-vertical] DisplayCreated but GetDisplay() is null — canvas would be blank");
 		}
 		/* Display is ready — bind PROGRAM channel 0 so ACTIVATE/MAIN_VIEW reaches VCDs. */
 		EnsureCanvasProgramChannel(true);
@@ -530,6 +531,20 @@ void ShortsDock::BuildUI()
 	};
 	connect(preview, &OBSQTDisplay::DisplayCreated, addDrawCallback);
 	root->addWidget(preview, 1); /* stretch: canvas takes all extra space */
+
+	/* Retry display attach after layout — dock widgets are often not exposed at ctor time.
+	 * Without obs_display, Windows shows a solid white HWND. */
+	QTimer::singleShot(0, this, [this]() {
+		if (preview)
+			preview->CreateDisplay(true);
+	});
+	QTimer::singleShot(250, this, [this]() {
+		if (preview && !preview->GetDisplay()) {
+			blog(LOG_WARNING, "[obs-shorts-vertical] Preview display still missing after 250ms — forcing create");
+			preview->CreateDisplay(true);
+		}
+		EnsureCanvasProgramChannel(true);
+	});
 
 	/* Compact OBS-style emoji toolbar — fixed height, centered. */
 	controlsBar = new QWidget(this);
@@ -873,8 +888,10 @@ void ShortsDock::EnsureCanvasProgramChannel(bool forceRebind)
 	if (cur)
 		obs_source_release(cur);
 
-	if (same && !forceRebind)
+	if (same && !forceRebind) {
+		EnsurePreviewSceneShowing(true);
 		return;
+	}
 
 	if (same && forceRebind) {
 		/* obs_canvas_set_channel no-ops when the pointer is unchanged and
@@ -994,18 +1011,23 @@ void ShortsDock::LogRenderPipeline(const char *reason)
 				obs_source_t *src = obs_sceneitem_get_source(item);
 				if (!src)
 					return true;
-				vec2 pos{}, scale{};
+				vec2 pos{}, scale{}, bounds{};
+				obs_sceneitem_crop crop{};
 				obs_sceneitem_get_pos(item, &pos);
 				obs_sceneitem_get_scale(item, &scale);
+				obs_sceneitem_get_bounds(item, &bounds);
+				obs_sceneitem_get_crop(item, &crop);
 				blog(LOG_INFO,
 				     "[obs-shorts-vertical]   item '%s' type=%s visible=%d "
 				     "src_active=%d src_showing=%d src_enabled=%d size=%ux%u "
-				     "pos=(%.1f,%.1f) scale=(%.3f,%.3f) bounds_type=%d",
+				     "pos=(%.1f,%.1f) scale=(%.3f,%.3f) bounds_type=%d bounds=(%.1f,%.1f) "
+				     "crop=L%u R%u T%u B%u",
 				     obs_source_get_name(src), obs_source_get_id(src),
 				     (int)obs_sceneitem_visible(item), (int)obs_source_active(src),
 				     (int)obs_source_showing(src), (int)obs_source_enabled(src),
 				     obs_source_get_width(src), obs_source_get_height(src), pos.x, pos.y, scale.x,
-				     scale.y, (int)obs_sceneitem_get_bounds_type(item));
+				     scale.y, (int)obs_sceneitem_get_bounds_type(item), bounds.x, bounds.y, crop.left,
+				     crop.right, crop.top, crop.bottom);
 				return true;
 			},
 			nullptr);
@@ -3154,6 +3176,18 @@ void ShortsDock::UpdatePreviewScale(int cx, int cy)
 			     previewScale);
 }
 
+void ShortsDock::showEvent(QShowEvent *event)
+{
+	QFrame::showEvent(event);
+	if (preview) {
+		preview->CreateDisplay(true);
+		if (preview->GetDisplay())
+			obs_display_set_enabled(preview->GetDisplay(), true);
+	}
+	EnsureCanvasProgramChannel(true);
+	EnsurePreviewSceneShowing(true);
+}
+
 void ShortsDock::DrawCallback(void *data, uint32_t cx, uint32_t cy)
 {
 	static_cast<ShortsDock *>(data)->DrawPreview(cx, cy);
@@ -3162,6 +3196,25 @@ void ShortsDock::DrawCallback(void *data, uint32_t cx, uint32_t cy)
 void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 {
 	drawCallbackCount++;
+
+	/* One-shot proof the OBS display callback is alive (not a white QWidget). */
+	if (drawCallbackCount == 1) {
+		size_t itemCount = 0;
+		if (scene) {
+			obs_scene_enum_items(
+				scene,
+				[](obs_scene_t *, obs_sceneitem_t *, void *p) -> bool {
+					(*static_cast<size_t *>(p))++;
+					return true;
+				},
+				&itemCount);
+		}
+		obs_source_t *sceneSrc = scene ? obs_scene_get_source(scene) : nullptr;
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] VerticalPreview draw callback executing: width=%u height=%u "
+		     "activeVerticalScene='%s' sceneItemCount=%zu canvas=%p",
+		     cx, cy, sceneSrc ? obs_source_get_name(sceneSrc) : "(null)", itemCount, (void *)canvas);
+	}
 
 	const uint32_t canvasW = verticalWidth > 0 ? verticalWidth : 1080;
 	const uint32_t canvasH = verticalHeight > 0 ? verticalHeight : 1920;
@@ -3195,10 +3248,17 @@ void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 	gs_viewport_push();
 	gs_projection_push();
 
-	/* Dark OBS-style clear — never white. No QWidget paint replaces this surface. */
+	/* Dark OBS-style clear — never white. */
 	vec4 clearColor;
 	vec4_set(&clearColor, 0.155f, 0.155f, 0.155f, 1.0f);
 	gs_clear(GS_CLEAR_COLOR, &clearColor, 0.0f, 0);
+
+	/* Guard against zero-size / off-screen projection (would look blank/white). */
+	if (cx < 2 || cy < 2 || canvasW < 2 || canvasH < 2) {
+		gs_projection_pop();
+		gs_viewport_pop();
+		return;
+	}
 
 	const int vpX = previewX;
 	const int vpY = previewY;

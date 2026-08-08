@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QString>
 #include <QVBoxLayout>
@@ -84,6 +85,9 @@ public:
 
 	void SaveSettings(obs_data_t *data);
 	void LoadSettings(obs_data_t *data);
+
+protected:
+	void showEvent(QShowEvent *event) override;
 
 	/* --- Public API for companion docks --- */
 	void RequestAddScene();

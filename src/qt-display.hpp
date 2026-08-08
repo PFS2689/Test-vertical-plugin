@@ -4,7 +4,7 @@
 #include <QWidget>
 #include <obs.hpp>
 
-/* OBS-style dark preview clear color (ABGR). Never white. */
+/* OBS-style dark preview clear color (ABGR packed). Never white. */
 #define GREY_COLOR_BACKGROUND 0xFF282828
 
 class OBSQTDisplay : public QWidget {
@@ -13,14 +13,17 @@ class OBSQTDisplay : public QWidget {
 			   SetDisplayBackgroundColor)
 
 	OBSDisplay display;
+	bool destroying = false;
+	bool createLogged = false;
 
-	virtual void paintEvent(QPaintEvent *event) override;
-	virtual void moveEvent(QMoveEvent *event) override;
-	virtual void resizeEvent(QResizeEvent *event) override;
+	void paintEvent(QPaintEvent *event) override;
+	void moveEvent(QMoveEvent *event) override;
+	void resizeEvent(QResizeEvent *event) override;
+	void showEvent(QShowEvent *event) override;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-	virtual bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
+	bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
 #else
-	virtual bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
+	bool nativeEvent(const QByteArray &eventType, void *message, long *result) override;
 #endif
 
 signals:
@@ -29,9 +32,13 @@ signals:
 
 public:
 	OBSQTDisplay(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
-	~OBSQTDisplay() { display = nullptr; }
+	~OBSQTDisplay() override
+	{
+		destroying = true;
+		display = nullptr;
+	}
 
-	virtual QPaintEngine *paintEngine() const override;
+	QPaintEngine *paintEngine() const override;
 
 	inline obs_display_t *GetDisplay() const { return display; }
 
@@ -41,7 +48,11 @@ public:
 	void SetDisplayBackgroundColor(const QColor &color);
 	void UpdateDisplayBackgroundColor();
 	void CreateDisplay(bool force = false);
-	void DestroyDisplay() { display = nullptr; }
+	void DestroyDisplay()
+	{
+		display = nullptr;
+		destroying = true;
+	}
 
 	void OnMove();
 	void OnDisplayChange();
