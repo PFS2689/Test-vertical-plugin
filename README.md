@@ -26,9 +26,10 @@ Settings uses categories on the left and pages on the right (OK / Cancel / Apply
 
 ## Install / test
 
-1. Install the current Setup.exe (UAC / Administrator) or zip release into  
-   `%ProgramData%\obs-studio\plugins\obs-shorts-vertical\`  
-   (OBS does **not** load plugins from `%APPDATA%\obs-studio\plugins` on Windows).
+1. Install the current Setup.exe (UAC / Administrator). It targets your OBS folder  
+   (`C:\Program Files\obs-studio` by default):  
+   `obs-plugins\64bit\obs-shorts-vertical.dll` and  
+   `data\obs-plugins\obs-shorts-vertical\`.
 2. Open OBS Studio **32.2.1**.
 3. If needed, enable **Vertical Shorts Plugin** in **Tools → Plugin Manager**, then restart OBS.
 4. Open **View → Docks** and enable Vertical Shorts / Scenes / Sources / Transitions as needed.

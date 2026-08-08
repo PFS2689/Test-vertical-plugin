@@ -16,13 +16,14 @@ Downloads (ClamAV + Windows Defender scanned before each GitHub release is publi
 
 About the Setup.exe
 -------------------
-This is a standard Inno Setup 6 installer. It installs the OBS plugin into the
-folder OBS actually loads on Windows:
+This is a standard Inno Setup 6 installer. It installs into your OBS Studio
+folder (default C:\Program Files\obs-studio):
 
-  %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
+  <OBS>\obs-plugins\64bit\obs-shorts-vertical.dll
+  <OBS>\data\obs-plugins\obs-shorts-vertical\
 
-Administrator rights (UAC) are required because ProgramData is machine-wide.
-OBS Studio does NOT load plugins from %APPDATA%\obs-studio\plugins on Windows.
+Administrator rights (UAC) are required. Setup detects OBS automatically; if
+OBS is not found you can browse to the folder that contains bin\64bit\obs64.exe.
 
 Local filename (exact):
 
@@ -58,7 +59,8 @@ treats each Setup.exe as an upgrade of the same product.
 Install with Setup.exe (recommended)
 ------------------------------------
 1. Close OBS Studio completely.
-2. Run "Vertical Shorts Plugin 1.0.5 Setup.exe", approve UAC, and finish the wizard.
+2. Run "Vertical Shorts Plugin 1.0.5 Setup.exe", approve UAC, confirm the OBS
+   folder (usually C:\Program Files\obs-studio), and finish the wizard.
 3. Start OBS Studio.
 4. If OBS shows Tools → Plugin Manager, ensure "Vertical Shorts Plugin" is enabled,
    then restart OBS if you just enabled it.
@@ -71,25 +73,24 @@ Install with Setup.exe (recommended)
 Install from zip
 ----------------
 1. Close OBS Studio completely.
-2. Press Win+R, paste this, and press Enter:
+2. Locate your OBS install folder (usually C:\Program Files\obs-studio).
+3. Copy:
 
-   %ProgramData%\obs-studio\plugins
+   zip\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
+     → <OBS>\obs-plugins\64bit\obs-shorts-vertical.dll
 
-3. If the "plugins" folder does not exist, create it.
-4. Copy the entire "obs-shorts-vertical" folder from this zip into that plugins folder.
+   zip\obs-shorts-vertical\data\*
+     → <OBS>\data\obs-plugins\obs-shorts-vertical\
 
-   Final path must be:
+   Final paths must be:
 
-   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll
-   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\data\locale\en-US.ini
+   C:\Program Files\obs-studio\obs-plugins\64bit\obs-shorts-vertical.dll
+   C:\Program Files\obs-studio\data\obs-plugins\obs-shorts-vertical\locale\en-US.ini
 
-   Do NOT install under %APPDATA%\obs-studio\plugins — OBS will not load it.
-
-5. Start OBS Studio.
-6. Enable the plugin in Tools → Plugin Manager if needed, then restart OBS.
-7. Open View → Docks → Vertical Shorts.
-8. Confirm the main OBS canvas remains unchanged while editing the separate vertical composition.
-9. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
+4. Start OBS Studio.
+5. Enable the plugin in Tools → Plugin Manager if needed, then restart OBS.
+6. Open View → Docks → Vertical Shorts.
+7. Test Vertical Go Live, Vertical Record, Short Clip, Long Clip, and Settings.
 
 If the dock does not appear
 ---------------------------
@@ -97,14 +98,16 @@ If the dock does not appear
 2. Open Help → Log Files → Current Log and search for "obs-shorts-vertical".
    You should see "Loading Vertical Shorts Plugin" and "Dock registered".
 3. Check Tools → Plugin Manager — the plugin must be Enabled.
-4. Remove any leftover copy under %APPDATA%\obs-studio\plugins\obs-shorts-vertical.
+4. Remove any leftover copy under %APPDATA%\obs-studio\plugins\obs-shorts-vertical
+   or %ProgramData%\obs-studio\plugins\obs-shorts-vertical (legacy).
 
 Uninstall
 ---------
 Use Windows Settings → Apps → Vertical Shorts Plugin, or run the Inno Setup
-uninstaller from the install folder. You can also delete:
+uninstaller. You can also delete:
 
-  %ProgramData%\obs-studio\plugins\obs-shorts-vertical
+  <OBS>\obs-plugins\64bit\obs-shorts-vertical.dll
+  <OBS>\data\obs-plugins\obs-shorts-vertical\
 
 Uninstall removes plugin binaries only. Scene-collection settings and stored
 credentials are left intact so a later reinstall can restore your workspace.

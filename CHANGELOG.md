@@ -22,7 +22,7 @@ Includes:
 - Secure credential storage (Windows Credential Manager + DPAPI fallback)
 - Vertical recording, short/long clips, clip buffer readiness
 - Optional recording automation and hotkeys
-- **Inno Setup 6** installer (`Vertical Shorts Plugin 1.0.5 Setup.exe`) installing to `%ProgramData%\obs-studio\plugins` (OBS load path; UAC required)
+- **Inno Setup 6** installer (`Vertical Shorts Plugin 1.0.5 Setup.exe`) installing into the OBS Studio folder (`obs-plugins\64bit` + `data\obs-plugins\obs-shorts-vertical`; UAC required)
 - Built against **OBS Studio 32.2.1** / obs-deps **2026-07-15**
 - MSVC Release build (`/MD`, `/DEBUG:NONE`), Windows Defender + ClamAV gates, SHA-256 checksums
 - Authenticode signing when CI credentials are configured (Azure Artifact Signing or OV/EV PFX)

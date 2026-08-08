@@ -111,10 +111,12 @@ function New-InstallerStaging {
 DisplayName=$displayName
 DisplayVersion=$ver
 AppId={$appId}
-InstallDir=%ProgramData%\obs-studio\plugins\obs-shorts-vertical
+InstallDir={autopf}\obs-studio
+PluginDll={autopf}\obs-studio\obs-plugins\64bit\obs-shorts-vertical.dll
+PluginData={autopf}\obs-studio\data\obs-plugins\obs-shorts-vertical
 PackageTimestampUtc=$packageStamp
 ConfigLocation=OBS scene collection key obs-shorts-vertical + Windows Credential Manager
-Notes=Binaries only under InstallDir. User config is never stored in overwritten plugin files.
+Notes=DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten.
 "@ | Set-Content -Path $metaPath -Encoding UTF8
     Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver, PackageTimestampUtc=$packageStamp)"
 

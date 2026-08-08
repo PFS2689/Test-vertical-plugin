@@ -4,15 +4,20 @@
 ;   {D4336EAC-D873-4E6B-8575-07096987E0C8}
 ; Same GUID as buildspec.json → uuids.windowsApp
 ;
-; Every future release (1.0.5, 1.0.6, 1.1.0, 2.0.0, ...) MUST keep this AppId.
-; Changing it breaks in-place upgrade detection.
+; Install root is the OBS Studio directory ({app} = OBS root), for example:
+;   C:\Program Files\obs-studio
 ;
-; Install location (OBS 32.x third-party plugin load path):
-;   %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
+; Plugin destinations (valid only after {app} is initialized):
+;   {app}\obs-plugins\64bit\obs-shorts-vertical.dll
+;   {app}\data\obs-plugins\obs-shorts-vertical\
+;
+; IMPORTANT: Never ExpandConstant('{app}') inside InitializeSetup (or any
+; pre-directory-init path). That raises:
+;   Internal error: An attempt was made to expand the "{app}" constant
+;   before it was initialized.
 ;
 ; User configuration is NOT stored under {app}. It lives in the OBS scene
-; collection ("obs-shorts-vertical") + Windows Credential Manager. Upgrades
-; replace binaries/resources only and must never wipe user settings.
+; collection ("obs-shorts-vertical") + Windows Credential Manager.
 
 #ifndef MyAppName
   #define MyAppName "Vertical Shorts Plugin"
@@ -49,10 +54,13 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={commonappdata}\obs-studio\plugins\obs-shorts-vertical
-UsePreviousAppDir=yes
+; Default OBS root — resolved via GetDefaultDirName (never ExpandConstant('{app}')).
+DefaultDirName={code:GetDefaultDirName}
+; Do not reuse a previous ProgramData plugin folder as {app} (OBS root is required).
+UsePreviousAppDir=no
 DisableProgramGroupPage=yes
-DisableDirPage=yes
+; Allow browse when OBS is not at the default location.
+DisableDirPage=no
 DirExistsWarning=no
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
@@ -77,24 +85,31 @@ CreateUninstallRegKey=yes
 UpdateUninstallLogAppName=yes
 AllowCancelDuringInstall=yes
 UsedUserAreasWarning=no
-; No reboot required for plugin DLL replacement when OBS is closed.
 AlwaysRestart=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Binary + locale + INSTALL.txt + install-meta.ini from staged payload only.
-; ignoreversion: always replace plugin files on upgrade (versioned by AppId, not file ver).
-Source: "{#SourceDir}\obs-shorts-vertical\*"; DestDir: "{app}"; \
+; DLL → OBS obs-plugins\64bit (only during install phase; {app} is valid here)
+Source: "{#SourceDir}\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"; \
+    DestDir: "{app}\obs-plugins\64bit"; \
+    Flags: ignoreversion uninsrestartdelete
+; Resources → OBS data\obs-plugins\obs-shorts-vertical\
+Source: "{#SourceDir}\obs-shorts-vertical\data\*"; \
+    DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
     Flags: ignoreversion recursesubdirs createallsubdirs uninsrestartdelete
+Source: "{#SourceDir}\obs-shorts-vertical\install-meta.ini"; \
+    DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
+    Flags: ignoreversion
+Source: "{#SourceDir}\obs-shorts-vertical\INSTALL.txt"; \
+    DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
+    Flags: ignoreversion skipifsourcedoesntexist
 
 [UninstallDelete]
-; Remove obsolete Vertical Shorts-only leftovers under the plugin tree.
-Type: filesandordirs; Name: "{app}\bin"
-Type: filesandordirs; Name: "{app}\data"
-Type: files; Name: "{app}\INSTALL.txt"
-Type: files; Name: "{app}\install-meta.ini"
+Type: files; Name: "{app}\obs-plugins\64bit\obs-shorts-vertical.dll"
+Type: files; Name: "{app}\obs-plugins\64bit\obs-shorts-vertical.pdb"
+Type: filesandordirs; Name: "{app}\data\obs-plugins\obs-shorts-vertical"
 
 [Code]
 const
@@ -105,18 +120,19 @@ var
   GIsUpgrade: Boolean;
   GPreviousVersion: String;
   GUpgradeBackupDir: String;
+  GObsInstallPath: String; { Detected OBS root; never requires {app} }
+  GExistingPluginDll: String;
 
-function PluginInstallRoot: String;
-var
-  Canonical: String;
+function AddBackslashIfNeeded(const Path: String): String;
 begin
-  { Prefer the wizard/app dir; fall back to the canonical OBS 32 load path. }
-  Canonical := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-shorts-vertical');
-  Result := ExpandConstant('{app}');
-  if Result = '' then
-    Result := Canonical
-  else if (not DirExists(Result)) and DirExists(Canonical) then
-    Result := Canonical;
+  Result := Path;
+  if (Result <> '') and (Result[Length(Result)] <> '\') then
+    Result := Result + '\';
+end;
+
+function IsValidObsDir(const Dir: String): Boolean;
+begin
+  Result := (Dir <> '') and FileExists(AddBackslashIfNeeded(Dir) + 'bin\64bit\obs64.exe');
 end;
 
 function InnoUninstallRegKey: String;
@@ -127,7 +143,6 @@ end;
 
 function LegacyUninstallRegKey: String;
 begin
-  { Pre-Inno custom MSVC installer used the bare product GUID (no _is1). }
   Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' +
             '{#MyAppIdGuid}' + '}';
 end;
@@ -148,6 +163,59 @@ begin
     Result := True;
 end;
 
+{ --- OBS detection (safe before {app} is initialized) --- }
+
+function DetectObsInstallPath: String;
+var
+  Candidate, RegVal: String;
+begin
+  Result := '';
+
+  { Uninstall location from a previous Vertical Shorts install (may be OBS root). }
+  if QueryUninstallString(InnoUninstallRegKey, 'InstallLocation', RegVal) and IsValidObsDir(RegVal) then begin
+    Result := RemoveBackslash(RegVal);
+    exit;
+  end;
+  if QueryUninstallString(LegacyUninstallRegKey, 'InstallLocation', RegVal) and IsValidObsDir(RegVal) then begin
+    Result := RemoveBackslash(RegVal);
+    exit;
+  end;
+
+  { OBS Studio uninstall / install keys (best-effort). }
+  if RegQueryStringValue(HKLM64, 'Software\OBS Studio', '', RegVal) and IsValidObsDir(RegVal) then begin
+    Result := RemoveBackslash(RegVal);
+    exit;
+  end;
+  if QueryUninstallString('Software\Microsoft\Windows\CurrentVersion\Uninstall\OBS Studio', 'InstallLocation', RegVal) and IsValidObsDir(RegVal) then begin
+    Result := RemoveBackslash(RegVal);
+    exit;
+  end;
+
+  { Known default: C:\Program Files\obs-studio }
+  Candidate := ExpandConstant('{autopf}\obs-studio');
+  if IsValidObsDir(Candidate) then begin
+    Result := Candidate;
+    exit;
+  end;
+
+  { 32-bit Program Files fallback on some systems }
+  Candidate := ExpandConstant('{pf}\obs-studio');
+  if IsValidObsDir(Candidate) then begin
+    Result := Candidate;
+    exit;
+  end;
+end;
+
+{ Called by DefaultDirName={code:GetDefaultDirName} — must not use {app}. }
+function GetDefaultDirName(Param: String): String;
+begin
+  Result := DetectObsInstallPath;
+  if Result = '' then
+    Result := ExpandConstant('{autopf}\obs-studio');
+end;
+
+{ --- Upgrade detection without {app} --- }
+
 function GetInstalledVersionFromRegistry: String;
 var
   Ver: String;
@@ -159,34 +227,81 @@ begin
     Result := Ver;
 end;
 
-function GetInstalledVersionFromMeta: String;
-var
-  MetaPath: String;
+function GetInstalledVersionFromMetaFile(const MetaPath: String): String;
 begin
   Result := '';
-  MetaPath := PluginInstallRoot + '\install-meta.ini';
   if FileExists(MetaPath) then
     Result := GetIniString('Install', 'DisplayVersion', '', MetaPath);
 end;
 
-function DetectPreviousVersion: String;
+function FindExistingPluginDll: String;
 var
-  Ver: String;
+  ObsRoot, Candidate, RegVal: String;
 begin
-  Ver := GetInstalledVersionFromMeta;
-  if Ver = '' then
-    Ver := GetInstalledVersionFromRegistry;
-  Result := Ver;
+  Result := '';
+
+  { New layout under detected / default OBS roots }
+  ObsRoot := GObsInstallPath;
+  if ObsRoot = '' then
+    ObsRoot := ExpandConstant('{autopf}\obs-studio');
+  Candidate := AddBackslashIfNeeded(ObsRoot) + 'obs-plugins\64bit\obs-shorts-vertical.dll';
+  if FileExists(Candidate) then begin
+    Result := Candidate;
+    exit;
+  end;
+
+  Candidate := ExpandConstant('{autopf}\obs-studio\obs-plugins\64bit\obs-shorts-vertical.dll');
+  if FileExists(Candidate) then begin
+    Result := Candidate;
+    exit;
+  end;
+
+  { InstallLocation from uninstall registry may point at OBS root or an old plugin tree. }
+  if QueryUninstallString(InnoUninstallRegKey, 'InstallLocation', RegVal) then begin
+    Candidate := AddBackslashIfNeeded(RegVal) + 'obs-plugins\64bit\obs-shorts-vertical.dll';
+    if FileExists(Candidate) then begin
+      Result := Candidate;
+      exit;
+    end;
+    Candidate := AddBackslashIfNeeded(RegVal) + 'bin\64bit\obs-shorts-vertical.dll';
+    if FileExists(Candidate) then begin
+      Result := Candidate;
+      exit;
+    end;
+  end;
+
+  { Legacy ProgramData third-party path from earlier 1.0.5 builds }
+  Candidate := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll');
+  if FileExists(Candidate) then
+    Result := Candidate;
 end;
 
-function PluginDllExists: Boolean;
+function DetectPreviousVersion: String;
+var
+  Ver, DllPath, MetaPath, Root: String;
 begin
-  Result := FileExists(PluginInstallRoot + '\bin\64bit\obs-shorts-vertical.dll');
+  Ver := GetInstalledVersionFromRegistry;
+
+  DllPath := FindExistingPluginDll;
+  if (Ver = '') and (DllPath <> '') then begin
+    if Pos('\obs-plugins\', LowerCase(DllPath)) > 0 then begin
+      { ...\obs-studio\obs-plugins\64bit\dll → OBS root }
+      Root := ExtractFileDir(ExtractFileDir(ExtractFileDir(DllPath)));
+      MetaPath := AddBackslashIfNeeded(Root) + 'data\obs-plugins\obs-shorts-vertical\install-meta.ini';
+    end else begin
+      { Legacy ...\obs-shorts-vertical\bin\64bit\dll → plugin root }
+      Root := ExtractFileDir(ExtractFileDir(ExtractFileDir(DllPath)));
+      MetaPath := AddBackslashIfNeeded(Root) + 'install-meta.ini';
+    end;
+    Ver := GetInstalledVersionFromMetaFile(MetaPath);
+  end;
+
+  Result := Ver;
 end;
 
 function IsUpgradeInstall: Boolean;
 begin
-  Result := (DetectPreviousVersion <> '') or PluginDllExists;
+  Result := (DetectPreviousVersion <> '') or (FindExistingPluginDll <> '');
 end;
 
 function CompareVersionParts(const A, B: String): Integer;
@@ -215,6 +330,7 @@ end;
 
 function IsOBSRunning: Boolean;
 begin
+  { Window/mutex check only — no {app} paths. }
   Result := (FindWindowByClassName(OBS_WINDOW_CLASS) <> 0) or
             CheckForMutexes('OBSStudioRunningMutex') or
             CheckForMutexes('OBS32RunningMutex');
@@ -229,7 +345,6 @@ begin
   for I := 1 to 60 do begin
     Wnd := FindWindowByClassName(OBS_WINDOW_CLASS);
     if Wnd = 0 then begin
-      { Window gone — wait briefly for process/mutex teardown }
       Sleep(500);
       Result := not IsOBSRunning;
       exit;
@@ -292,7 +407,7 @@ end;
 
 function CreateUpgradeBackup: Boolean;
 var
-  Stamp, Dest, Root, PluginCfg: String;
+  Stamp, Dest, MetaPath, PluginCfg: String;
 begin
   Result := True;
   Stamp := GetDateTimeString('yyyymmdd_hhnnss', #0, #0);
@@ -303,10 +418,12 @@ begin
     exit;
   end;
 
-  Root := PluginInstallRoot;
-  CopyFileIfExists(Root + '\install-meta.ini', Dest + '\install-meta.ini');
+  { {app} is initialized by PrepareToInstall time. }
+  MetaPath := ExpandConstant('{app}\data\obs-plugins\obs-shorts-vertical\install-meta.ini');
+  CopyFileIfExists(MetaPath, Dest + '\install-meta.ini');
+  if (GExistingPluginDll <> '') and FileExists(GExistingPluginDll) then
+    SaveStringToFile(Dest + '\previous-dll-path.txt', GExistingPluginDll + #13#10, False);
 
-  { Lightweight plugin_config copy only — never duplicate recordings/media. }
   PluginCfg := ExpandConstant('{userappdata}\obs-studio\plugin_config\obs-shorts-vertical');
   if DirExists(PluginCfg) then begin
     ForceDirectories(Dest + '\plugin_config');
@@ -319,8 +436,9 @@ begin
     'PreviousVersion=' + GPreviousVersion + #13#10 +
     'NewVersion={#MyAppVersion}'#13#10 +
     'AppId={' + '{#MyAppIdGuid}' + '}'#13#10 +
-    'AppDir=' + Root + #13#10 +
-    'PreviousDllExists=' + IntToStr(Integer(PluginDllExists)) + #13#10 +
+    'ObsInstallPath=' + GObsInstallPath + #13#10 +
+    'AppDir=' + ExpandConstant('{app}') + #13#10 +
+    'PreviousDll=' + GExistingPluginDll + #13#10 +
     'UserConfig=OBS scene collection key obs-shorts-vertical (not overwritten)'#13#10 +
     'Credentials=Windows Credential Manager (not overwritten)'#13#10 +
     'Note=Backup excludes recordings and large media files.'#13#10,
@@ -329,15 +447,20 @@ end;
 
 function RemoveObsoletePluginBins: Boolean;
 var
-  Root, P: String;
+  P: String;
 begin
   Result := True;
-  Root := PluginInstallRoot;
-  { Only Vertical Shorts leftovers under the plugin tree — never OBS core or user data. }
-  P := Root + '\bin\64bit\obs-shorts-vertical.pdb';
+  { New layout leftovers under OBS root ({app} valid in PrepareToInstall). }
+  P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.pdb');
   if FileExists(P) then
     DeleteFile(P);
-  P := Root + '\data\icons';
+
+  { Legacy ProgramData tree from earlier builds — binaries only. }
+  P := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-shorts-vertical');
+  if DirExists(P) then
+    DelTree(P, True, True, True);
+
+  P := ExpandConstant('{userappdata}\obs-studio\plugins\obs-shorts-vertical');
   if DirExists(P) then
     DelTree(P, True, True, True);
 end;
@@ -348,11 +471,16 @@ var
   Prev, Cur: String;
 begin
   Result := True;
+
+  { Detect OBS without touching {app}. }
+  GObsInstallPath := DetectObsInstallPath;
+  GExistingPluginDll := FindExistingPluginDll;
+  GUpgradeBackupDir := '';
+
   Cur := '{#MyAppVersion}';
   Prev := DetectPreviousVersion;
   GPreviousVersion := Prev;
   GIsUpgrade := IsUpgradeInstall;
-  GUpgradeBackupDir := '';
 
   if GIsUpgrade then begin
     if Prev = '' then
@@ -380,6 +508,49 @@ begin
     Result := False;
 end;
 
+procedure InitializeWizard;
+begin
+  { Always prefer a validated OBS root — never a legacy ProgramData plugin tree. }
+  if GObsInstallPath <> '' then
+    WizardForm.DirEdit.Text := GObsInstallPath
+  else if not IsValidObsDir(WizardDirValue) then
+    WizardForm.DirEdit.Text := ExpandConstant('{autopf}\obs-studio');
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = wpSelectDir then begin
+    if not IsValidObsDir(WizardDirValue) then begin
+      MsgBox(
+        'Please select a valid OBS Studio installation folder.'#13#10#13#10 +
+        'It must contain:'#13#10 +
+        '  bin\64bit\obs64.exe'#13#10#13#10 +
+        'Example:'#13#10 +
+        '  C:\Program Files\obs-studio',
+        mbError, MB_OK);
+      Result := False;
+    end else
+      GObsInstallPath := WizardDirValue;
+  end;
+end;
+
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
+  MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
+begin
+  Result :=
+    'OBS Studio folder:' + NewLine +
+    Space + WizardDirValue + NewLine + NewLine +
+    'Plugin DLL:' + NewLine +
+    Space + WizardDirValue + '\obs-plugins\64bit\obs-shorts-vertical.dll' + NewLine + NewLine +
+    'Plugin data:' + NewLine +
+    Space + WizardDirValue + '\data\obs-plugins\obs-shorts-vertical\' + NewLine;
+  if GIsUpgrade then
+    Result := Result + NewLine + 'Mode: Upgrade (settings preserved)' + NewLine
+  else
+    Result := Result + NewLine + 'Mode: Fresh install' + NewLine;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   NeedsRestart := False;
@@ -390,6 +561,11 @@ begin
       Result := 'OBS Studio is still running. Close it and retry Setup.';
       exit;
     end;
+  end;
+
+  if not IsValidObsDir(ExpandConstant('{app}')) then begin
+    Result := 'Selected folder is not a valid OBS Studio installation (missing bin\64bit\obs64.exe).';
+    exit;
   end;
 
   if GIsUpgrade then begin
@@ -406,31 +582,29 @@ var
   MetaPath: String;
 begin
   if CurStep = ssPostInstall then begin
-    { Fresh install-meta for version detection on the next upgrade. }
-    MetaPath := ExpandConstant('{app}\install-meta.ini');
+    MetaPath := ExpandConstant('{app}\data\obs-plugins\obs-shorts-vertical\install-meta.ini');
     SetIniString('Install', 'DisplayName', '{#MyAppName}', MetaPath);
     SetIniString('Install', 'DisplayVersion', '{#MyAppVersion}', MetaPath);
     SetIniString('Install', 'AppId', '{' + '{#MyAppIdGuid}' + '}', MetaPath);
     SetIniString('Install', 'InstallDir', ExpandConstant('{app}'), MetaPath);
+    SetIniString('Install', 'PluginDll',
+      ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.dll'), MetaPath);
+    SetIniString('Install', 'PluginData',
+      ExpandConstant('{app}\data\obs-plugins\obs-shorts-vertical'), MetaPath);
     SetIniString('Install', 'InstalledTimestampUtc',
       GetDateTimeString('yyyy-mm-dd"T"hh:nn:ss"Z"', #0, #0), MetaPath);
     SetIniString('Install', 'UpgradeBackup', GUpgradeBackupDir, MetaPath);
     SetIniString('Install', 'ConfigLocation',
       'OBS scene collection key obs-shorts-vertical + Windows Credential Manager', MetaPath);
     SetIniString('Install', 'Notes',
-      'Binaries only under InstallDir. User config is never stored in overwritten plugin files.', MetaPath);
-
-    { Clean mistaken AppData plugin copies from older builds (binaries only). }
-    if DirExists(ExpandConstant('{userappdata}\obs-studio\plugins\obs-shorts-vertical')) then
-      DelTree(ExpandConstant('{userappdata}\obs-studio\plugins\obs-shorts-vertical'), True, True, True);
+      'DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten.', MetaPath);
   end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  { Uninstall removes binaries only. Scene-collection settings and Credential
-    Manager secrets are left intact so a reinstall can restore the workspace. }
   if CurUninstallStep = usPostUninstall then begin
-    { intentionally no deletion of AppData scene collections or credentials }
+    { Binaries removed by [Files]/[UninstallDelete]. Scene collections and
+      Credential Manager secrets are intentionally left intact. }
   end;
 end;
