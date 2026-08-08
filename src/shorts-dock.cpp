@@ -406,15 +406,16 @@ void ShortsDock::BuildUI()
 	setObjectName(QStringLiteral("ShortsDock"));
 	setStyleSheet(QStringLiteral(
 		"#ShortsDock { background-color: #1f1f1f; }"
-		"#vsControlsBar { background-color: #1f1f1f; }"
+		"#vsControlsBar, #vsPresetBar { background-color: #1f1f1f; }"
 		"#vsControlsBar QPushButton {"
-		"  font-size: 20px;"
-		"  min-width: 40px;"
-		"  max-width: 48px;"
-		"  min-height: 34px;"
-		"  padding: 2px 4px;"
+		"  font-size: 14px;"
+		"  min-width: 28px;"
+		"  max-width: 32px;"
+		"  min-height: 24px;"
+		"  max-height: 26px;"
+		"  padding: 0px 1px;"
 		"  border: 1px solid #3a3a3a;"
-		"  border-radius: 4px;"
+		"  border-radius: 3px;"
 		"  background-color: #2a2a2a;"
 		"  color: #f0f0f0;"
 		"}"
@@ -422,7 +423,18 @@ void ShortsDock::BuildUI()
 		"  background-color: #3d5a3d;"
 		"  border-color: #6aae6a;"
 		"}"
-		"#vsControlsBar QPushButton:pressed { background-color: #333333; }"));
+		"#vsControlsBar QPushButton:pressed { background-color: #333333; }"
+		"#vsPresetBar QLabel {"
+		"  color: #d0d0d0;"
+		"  font-size: 11px;"
+		"  padding: 0px;"
+		"}"
+		"#vsPresetBar QComboBox {"
+		"  min-height: 22px;"
+		"  max-height: 24px;"
+		"  font-size: 11px;"
+		"  padding: 0px 4px;"
+		"}"));
 
 	auto *root = new QVBoxLayout(this);
 	root->setContentsMargins(2, 2, 2, 2);
@@ -445,13 +457,15 @@ void ShortsDock::BuildUI()
 		}
 	};
 	connect(preview, &OBSQTDisplay::DisplayCreated, addDrawCallback);
-	root->addWidget(preview, 1);
+	root->addWidget(preview, 1); /* stretch: canvas takes all extra space */
 
+	/* Compact OBS-style emoji toolbar — fixed height, centered. */
 	controlsBar = new QWidget(this);
 	controlsBar->setObjectName(QStringLiteral("vsControlsBar"));
+	controlsBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 	auto *bar = new QHBoxLayout(controlsBar);
-	bar->setContentsMargins(2, 2, 2, 2);
-	bar->setSpacing(4);
+	bar->setContentsMargins(2, 1, 2, 1);
+	bar->setSpacing(3);
 
 	/* Emoji-only controls — tooltips carry the accessible names. */
 	goLiveBtn = new QPushButton(QString::fromUtf8("\U0001F7E2"), controlsBar);
@@ -471,43 +485,73 @@ void ShortsDock::BuildUI()
 	shortClipBtn->setAccessibleName(Translate("ShortClip"));
 	connect(shortClipBtn, &QPushButton::clicked, this, &ShortsDock::OnShortClip);
 
-	shortClipPresetCombo = new QComboBox(controlsBar);
-	shortClipPresetCombo->setObjectName(QStringLiteral("vsShortClipPreset"));
-	shortClipPresetCombo->setToolTip(Translate("ShortClipLength"));
-	shortClipPresetCombo->setAccessibleName(Translate("ShortClipLength"));
-	shortClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-	connect(shortClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&ShortsDock::OnShortClipPresetChanged);
-
 	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7"), controlsBar);
 	longClipBtn->setToolTip(Translate("LongClipTip"));
 	longClipBtn->setAccessibleName(Translate("LongClip"));
 	connect(longClipBtn, &QPushButton::clicked, this, &ShortsDock::OnLongClip);
-
-	longClipPresetCombo = new QComboBox(controlsBar);
-	longClipPresetCombo->setObjectName(QStringLiteral("vsLongClipPreset"));
-	longClipPresetCombo->setToolTip(Translate("LongClipLength"));
-	longClipPresetCombo->setAccessibleName(Translate("LongClipLength"));
-	longClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-	connect(longClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-		&ShortsDock::OnLongClipPresetChanged);
 
 	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F"), controlsBar);
 	settingsBtn->setToolTip(Translate("Settings"));
 	settingsBtn->setAccessibleName(Translate("Settings"));
 	connect(settingsBtn, &QPushButton::clicked, this, &ShortsDock::OnSettings);
 
-	SyncClipPresetControls();
-
+	bar->addStretch(1);
 	bar->addWidget(goLiveBtn);
 	bar->addWidget(recordBtn);
 	bar->addWidget(shortClipBtn);
-	bar->addWidget(shortClipPresetCombo);
 	bar->addWidget(longClipBtn);
-	bar->addWidget(longClipPresetCombo);
 	bar->addWidget(settingsBtn);
 	bar->addStretch(1);
 	root->addWidget(controlsBar, 0);
+
+	/* Preset row directly under emoji toolbar — fixed/minimum height. */
+	presetBar = new QWidget(this);
+	presetBar->setObjectName(QStringLiteral("vsPresetBar"));
+	presetBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+	auto *presetLayout = new QHBoxLayout(presetBar);
+	presetLayout->setContentsMargins(4, 1, 4, 2);
+	presetLayout->setSpacing(4);
+
+	auto *presetLabel = new QLabel(Translate("DockPreset") + QStringLiteral(":"), presetBar);
+
+	canvasPresetCombo = new QComboBox(presetBar);
+	canvasPresetCombo->setObjectName(QStringLiteral("vsCanvasPreset"));
+	canvasPresetCombo->setToolTip(Translate("CanvasPreset"));
+	canvasPresetCombo->setAccessibleName(Translate("CanvasPreset"));
+	canvasPresetCombo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	canvasPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+	canvasPresetCombo->setMinimumContentsLength(12);
+	connect(canvasPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&ShortsDock::OnCanvasPresetChanged);
+	presetLabel->setBuddy(canvasPresetCombo);
+
+	/* Clip length selectors stay available but off the emoji row. */
+	shortClipPresetCombo = new QComboBox(presetBar);
+	shortClipPresetCombo->setObjectName(QStringLiteral("vsShortClipPreset"));
+	shortClipPresetCombo->setToolTip(Translate("ShortClipLength"));
+	shortClipPresetCombo->setAccessibleName(Translate("ShortClipLength"));
+	shortClipPresetCombo->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+	shortClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	connect(shortClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&ShortsDock::OnShortClipPresetChanged);
+
+	longClipPresetCombo = new QComboBox(presetBar);
+	longClipPresetCombo->setObjectName(QStringLiteral("vsLongClipPreset"));
+	longClipPresetCombo->setToolTip(Translate("LongClipLength"));
+	longClipPresetCombo->setAccessibleName(Translate("LongClipLength"));
+	longClipPresetCombo->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+	longClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	connect(longClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&ShortsDock::OnLongClipPresetChanged);
+
+	presetLayout->addWidget(presetLabel, 0);
+	presetLayout->addWidget(canvasPresetCombo, 1);
+	presetLayout->addWidget(shortClipPresetCombo, 0);
+	presetLayout->addWidget(longClipPresetCombo, 0);
+	root->addWidget(presetBar, 0);
+
+	SyncCanvasPresetControl();
+	SyncClipPresetControls();
 }
 
 void ShortsDock::ApplyCanvasFromSettings()
@@ -1576,6 +1620,62 @@ void ShortsDock::OnLongClipPresetChanged(int index)
 	ApplyClipPresetChange();
 }
 
+void ShortsDock::PopulateCanvasPresetCombo()
+{
+	if (!canvasPresetCombo)
+		return;
+
+	canvasPresetCombo->clear();
+	canvasPresetCombo->addItem(Translate("PresetYouTube"), (int)vsp::CanvasPreset::YouTubeVertical);
+	canvasPresetCombo->addItem(Translate("PresetTikTok"), (int)vsp::CanvasPreset::TikTokVertical);
+	canvasPresetCombo->addItem(Translate("PresetTwitch"), (int)vsp::CanvasPreset::TwitchVertical);
+	canvasPresetCombo->addItem(Translate("PresetInstagram"), (int)vsp::CanvasPreset::InstagramVertical);
+	canvasPresetCombo->addItem(Translate("PresetCustom"), (int)vsp::CanvasPreset::Custom);
+}
+
+void ShortsDock::SyncCanvasPresetControl()
+{
+	if (!canvasPresetCombo)
+		return;
+
+	syncingCanvasPreset = true;
+	if (canvasPresetCombo->count() == 0)
+		PopulateCanvasPresetCombo();
+
+	const int idx = canvasPresetCombo->findData((int)settings.canvasPreset);
+	if (idx >= 0)
+		canvasPresetCombo->setCurrentIndex(idx);
+	else if (canvasPresetCombo->count() > 0)
+		canvasPresetCombo->setCurrentIndex(0);
+	syncingCanvasPreset = false;
+}
+
+void ShortsDock::ApplyCanvasPresetChange()
+{
+	const uint32_t oldW = verticalWidth;
+	const uint32_t oldH = verticalHeight;
+	ApplyCanvasFromSettings();
+
+	if (verticalWidth != oldW || verticalHeight != oldH) {
+		CreateView();
+		if (outputs)
+			outputs->SetVideo(video);
+		if (canvas && scene)
+			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+	}
+
+	obs_frontend_save();
+}
+
+void ShortsDock::OnCanvasPresetChanged(int index)
+{
+	if (syncingCanvasPreset || !canvasPresetCombo || index < 0)
+		return;
+
+	settings.canvasPreset = static_cast<vsp::CanvasPreset>(canvasPresetCombo->itemData(index).toInt());
+	ApplyCanvasPresetChange();
+}
+
 void ShortsDock::HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind)
 {
 	const QString title = Translate(kind == ClipKind::Long ? "LongClip" : "ShortClip");
@@ -1665,6 +1765,7 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 		EnsureBufferIfConfigured();
 	}
 
+	SyncCanvasPresetControl();
 	SyncClipPresetControls();
 }
 
@@ -1879,6 +1980,7 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 		RequestSelectScene(QString::fromUtf8(active));
 	EmitSceneUiChanged();
 	emit verticalTransitionsChanged();
+	SyncCanvasPresetControl();
 	SyncClipPresetControls();
 }
 

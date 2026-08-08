@@ -132,6 +132,7 @@ private slots:
 	void OnLongClip();
 	void OnShortClipPresetChanged(int index);
 	void OnLongClipPresetChanged(int index);
+	void OnCanvasPresetChanged(int index);
 	void OnSettings();
 	void OpenSettingsStreaming(bool focusStreaming = true);
 	void OnStreamingChanged(bool active);
@@ -159,6 +160,9 @@ private:
 	void PopulateClipPresetCombos();
 	void SyncClipPresetControls();
 	void ApplyClipPresetChange();
+	void PopulateCanvasPresetCombo();
+	void SyncCanvasPresetControl();
+	void ApplyCanvasPresetChange();
 	void RegisterHotkeys();
 	void UnregisterHotkeys();
 	void SaveHotkeys(obs_data_t *data) const;
@@ -192,6 +196,7 @@ private:
 	OBSQTDisplay *preview = nullptr;
 	std::unique_ptr<OBSEventFilter> previewEventFilter;
 	QWidget *controlsBar = nullptr;
+	QWidget *presetBar = nullptr;
 	QPushButton *goLiveBtn = nullptr;
 	QPushButton *recordBtn = nullptr;
 	QPushButton *shortClipBtn = nullptr;
@@ -199,7 +204,9 @@ private:
 	QPushButton *longClipBtn = nullptr;
 	QComboBox *longClipPresetCombo = nullptr;
 	QPushButton *settingsBtn = nullptr;
+	QComboBox *canvasPresetCombo = nullptr;
 	bool syncingClipPresets = false;
+	bool syncingCanvasPreset = false;
 
 	/* Shared state */
 	vsp::PluginSettings settings;
