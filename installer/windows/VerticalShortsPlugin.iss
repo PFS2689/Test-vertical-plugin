@@ -242,7 +242,6 @@ end;
 
 function ConfirmUpgrade(const PrevVer, NewVer: String): Boolean;
 var
-  Labels: TArrayOfString;
   Body: String;
 begin
   Body :=
@@ -250,31 +249,24 @@ begin
     'Setup will upgrade it to Vertical Shorts Plugin ' + NewVer + '.'#13#10#13#10 +
     'Your scenes, sources, destinations, credentials, schedules, and settings will be preserved.'#13#10 +
     'You do not need to uninstall first.';
-  SetArrayLength(Labels, 2);
-  Labels[0] := 'Upgrade';
-  Labels[1] := 'Cancel';
-  Result := TaskDialogMsgBox('Upgrade Vertical Shorts Plugin', Body, tdInformation,
-    MB_OKCANCEL, Labels, 0) = IDOK;
+  Result := TaskDialogMsgBox('Upgrade Vertical Shorts Plugin', Body, mbInformation,
+    MB_OKCANCEL, ['&Upgrade', 'Cancel'], 0) = IDOK;
 end;
 
 function EnsureOBSClosed: Boolean;
 var
-  Labels: TArrayOfString;
   Answer: Integer;
 begin
   Result := True;
   if not IsOBSRunning then
     exit;
 
-  SetArrayLength(Labels, 2);
-  Labels[0] := 'Close OBS and Continue';
-  Labels[1] := 'Cancel';
   Answer := TaskDialogMsgBox(
     'OBS Studio must be closed',
     'OBS Studio must be closed before Vertical Shorts Plugin can be updated.'#13#10#13#10 +
     'Setup will ask OBS to quit normally. The plugin DLL cannot be replaced while OBS has it loaded.'#13#10#13#10 +
     'OBS will not be force-killed without your confirmation.',
-    tdWarning, MB_OKCANCEL, Labels, 0);
+    mbConfirmation, MB_OKCANCEL, ['&Close OBS and Continue', 'Cancel'], 0);
 
   if Answer <> IDOK then begin
     Result := False;
