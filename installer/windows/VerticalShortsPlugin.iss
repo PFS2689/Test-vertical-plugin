@@ -75,7 +75,6 @@ RestartApplications=no
 RestartIfNeededByRun=no
 CreateUninstallRegKey=yes
 UpdateUninstallLogAppName=yes
-OverwriteUninstRegEntries=yes
 AllowCancelDuringInstall=yes
 UsedUserAreasWarning=no
 ; No reboot required for plugin DLL replacement when OBS is closed.
