@@ -86,9 +86,6 @@ public:
 	void SaveSettings(obs_data_t *data);
 	void LoadSettings(obs_data_t *data);
 
-protected:
-	void showEvent(QShowEvent *event) override;
-
 	/* --- Public API for companion docks --- */
 	void RequestAddScene();
 	void RequestRemoveScene();
@@ -158,6 +155,9 @@ protected:
 	const vsp::PluginSettings &Settings() const { return settings; }
 	vsp::AutomationStatus CurrentAutomationStatus() const;
 	QString CurrentAutomationStatusText() const;
+
+protected:
+	void showEvent(QShowEvent *event) override;
 
 signals:
 	void verticalScenesChanged();

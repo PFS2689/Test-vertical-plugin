@@ -15,6 +15,9 @@
 #include <algorithm>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #endif
@@ -230,7 +233,7 @@ void OBSQTDisplay::showEvent(QShowEvent *event)
 	CreateDisplay(true);
 	if (display) {
 		QSize size = GetPixelSize(this);
-		obs_display_resize(display, std::max(2, size.width()), std::max(2, size.height()));
+		obs_display_resize(display, (std::max)(2, size.width()), (std::max)(2, size.height()));
 	}
 }
 
@@ -266,7 +269,7 @@ void OBSQTDisplay::resizeEvent(QResizeEvent *event)
 
 	if (isVisible() && display) {
 		QSize size = GetPixelSize(this);
-		obs_display_resize(display, std::max(2, size.width()), std::max(2, size.height()));
+		obs_display_resize(display, (std::max)(2, size.width()), (std::max)(2, size.height()));
 	}
 
 	emit DisplayResized();
