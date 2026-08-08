@@ -72,7 +72,7 @@ std::string CaptureSourceFamily(const char *id)
 		return "av_capture";
 	if (ContainsInsensitive(id, "v4l2"))
 		return "v4l2";
-	return UnversionedId(id);
+	return id ? id : "";
 }
 
 std::string GetCaptureDeviceKeyFromSettings(const char *typeId, obs_data_t *settings)
