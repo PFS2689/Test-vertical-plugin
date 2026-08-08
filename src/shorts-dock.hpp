@@ -227,6 +227,9 @@ private:
 	bool clearing = false;
 	bool loadingSettings = false;
 	bool shuttingDown = false;
+	/* Config schema tracking (independent from PLUGIN_VERSION). */
+	int loadedConfigSchema = 0;
+	bool configSchemaTooNew = false;
 
 	vec2 startPos{};
 	vec2 mousePos{};

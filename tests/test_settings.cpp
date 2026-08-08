@@ -87,6 +87,15 @@ int main()
 	expect(!vsp::ValidateRecordingPath(QStringLiteral("\\\\.\\PhysicalDrive0"), &pathErr),
 	       "device path rejected");
 
+	expect(vsp::kConfigSchemaVersion == 1, "config schema version is 1");
+	expect(vsp::ClassifyConfigSchema(0) == vsp::ConfigSchemaAction::MigrateForward,
+	       "schema 0 migrates forward");
+	expect(vsp::ClassifyConfigSchema(1) == vsp::ConfigSchemaAction::None, "schema 1 is current");
+	expect(vsp::ClassifyConfigSchema(2) == vsp::ConfigSchemaAction::RefuseDowngrade,
+	       "newer schema refuses downgrade");
+	expect(vsp::ClassifyConfigSchema(1, 2) == vsp::ConfigSchemaAction::MigrateForward,
+	       "plugin schema bump migrates");
+
 	if (failures) {
 		std::cerr << failures << " test(s) failed\n";
 		return 1;

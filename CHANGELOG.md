@@ -32,6 +32,8 @@ Includes:
 - Combined Vertical Scenes / Sources / Transitions into **Vertical Production** dock
 - Settings: category list on the left; removed Hotkeys and Advanced tabs; repeat-by-day schedule day checkboxes
 - Vertical canvas audio no longer uses `MIX_AUDIO` (independent from main program mix)
+- **In-place upgrades:** permanent Inno Setup AppId; Setup detects an existing install, offers Upgrade/Cancel, requires OBS closed, backs up lightweight metadata, replaces binaries only, and preserves destinations/credentials/scenes/settings
+- Configuration `config_schema` (independent from plugin version) with forward migration + backup; never auto-downgrades
 
 ---
 

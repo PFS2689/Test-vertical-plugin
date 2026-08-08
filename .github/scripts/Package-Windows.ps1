@@ -99,6 +99,23 @@ function New-InstallerStaging {
         Copy-Item -Force $installSrc (Join-Path $StageRoot 'INSTALL.txt')
     }
 
+    # Version identity for in-place upgrades (AppId must never change across releases).
+    $buildSpec = Get-Content -Path (Join-Path $ProjectRoot 'buildspec.json') -Raw | ConvertFrom-Json
+    $appId = [string]$buildSpec.uuids.windowsApp
+    $displayName = if ($buildSpec.displayName) { [string]$buildSpec.displayName } else { 'Vertical Shorts Plugin' }
+    $ver = [string]$buildSpec.version
+    $metaPath = Join-Path $dstPlugin 'install-meta.ini'
+    @"
+[Install]
+DisplayName=$displayName
+DisplayVersion=$ver
+AppId={$appId}
+InstallDir=%ProgramData%\obs-studio\plugins\obs-shorts-vertical
+ConfigLocation=OBS scene collection key obs-shorts-vertical + Windows Credential Manager
+Notes=Binaries only under InstallDir. User config is never stored in overwritten plugin files.
+"@ | Set-Content -Path $metaPath -Encoding UTF8
+    Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver)"
+
     return $dstPlugin
 }
 

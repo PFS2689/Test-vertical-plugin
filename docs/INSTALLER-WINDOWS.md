@@ -1,6 +1,7 @@
 # Windows installer (Inno Setup)
 
-Vertical Shorts Plugin ships a **standard Inno Setup 6** installer.
+Vertical Shorts Plugin ships a **standard Inno Setup 6** installer with a permanent
+in-place upgrade identity.
 
 ## Final installer name
 
@@ -10,23 +11,64 @@ Vertical Shorts Plugin 1.0.5 Setup.exe
 
 (Product name and version come from `buildspec.json`.)
 
+## Permanent AppId (do not change)
+
+```
+{D4336EAC-D873-4E6B-8575-07096987E0C8}
+```
+
+Source of truth: `buildspec.json` → `uuids.windowsApp` → `installer/windows/VerticalShortsPlugin.iss` → `AppId`.
+
+This GUID must remain **exactly the same** for every future version (1.0.5, 1.0.6, 1.1.0, 2.0.0, …).
+Changing it breaks Windows/Inno upgrade detection and forces a side-by-side product.
+
+## In-place upgrades
+
+When Vertical Shorts Plugin is already installed, running a newer Setup.exe:
+
+1. Detects the previous version (`install-meta.ini` and/or Uninstall registry)
+2. Shows an **Upgrade** / **Cancel** confirmation (no uninstall required)
+3. Requires OBS Studio to be closed (**Close OBS and Continue** / **Cancel**)
+4. Creates a lightweight backup under `%LOCALAPPDATA%\VerticalShortsPlugin\upgrade-backups\`
+5. Replaces plugin binaries/resources under ProgramData only
+6. Preserves user configuration (scene collection + Credential Manager)
+7. Finishes without requiring a computer restart
+
+Setup never overwrites saved destinations, stream keys, vertical scenes/sources/transforms,
+automation schedules, recording paths, canvas presets, or clip settings during a normal upgrade.
+
 ## Build order (required)
 
 1. Build the plugin (**Release** on tags, RelWithDebInfo on PRs)
 2. Verify `obs-shorts-vertical.dll` + locale + `INSTALL.txt`
-3. Stage payload under `release/staging/obs-shorts-vertical/`
+3. Stage payload under `release/staging/obs-shorts-vertical/` (includes `install-meta.ini`)
 4. Compile `installer/windows/VerticalShortsPlugin.iss` with **ISCC.exe**
 5. Scan / sign / publish the resulting Setup.exe
 
 Never point Inno `SourceDir` at the Git source tree. Never compile the installer before the plugin build succeeds.
 
-## Install location
+## Install location (binaries)
 
 ```
 %ProgramData%\obs-studio\plugins\obs-shorts-vertical\
+  bin\64bit\obs-shorts-vertical.dll
+  data\locale\en-US.ini
+  install-meta.ini
 ```
 
 Administrator (UAC) is required. OBS does **not** load plugins from `%APPDATA%\obs-studio\plugins`.
+
+## User configuration (never overwritten by Setup)
+
+| Data | Location |
+|------|----------|
+| Vertical scenes, sources, transforms, plugin settings | OBS scene collection key `obs-shorts-vertical` |
+| Stream keys / passwords | Windows Credential Manager (DPAPI fallback under plugin_config) |
+| Schema backups (plugin runtime) | `%APPDATA%\obs-studio\plugin_config\obs-shorts-vertical\backups\` |
+| Installer upgrade backups | `%LOCALAPPDATA%\VerticalShortsPlugin\upgrade-backups\` |
+
+Configuration uses a **schema version** (`config_schema`) independent from the plugin product version.
+The plugin migrates forward with a backup and never auto-downgrades a newer schema.
 
 ## Local packaging (Windows)
 

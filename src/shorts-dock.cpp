@@ -1612,6 +1612,13 @@ void ShortsDock::SaveSettings(obs_data_t *data)
 			vsp::DeleteSecret(vsp::PasswordTarget(d.id));
 	}
 	vsp::SaveSettingsToData(data, settings, verticalWidth, verticalHeight);
+	/* Never claim a downgrade when a newer schema was loaded by an older plugin. */
+	if (configSchemaTooNew && loadedConfigSchema > vsp::kConfigSchemaVersion) {
+		obs_data_set_int(data, "config_schema", loadedConfigSchema);
+		blog(LOG_WARNING,
+		     "[obs-shorts-vertical] Preserving newer config_schema=%d (plugin understands %d)",
+		     loadedConfigSchema, vsp::kConfigSchemaVersion);
+	}
 	SaveHotkeys(data);
 
 	OBSDataArrayAutoRelease arr = obs_data_array_create();
@@ -1636,6 +1643,29 @@ void ShortsDock::SaveSettings(obs_data_t *data)
 void ShortsDock::LoadSettings(obs_data_t *data)
 {
 	loadingSettings = true;
+
+	const int storedSchema = vsp::ReadConfigSchema(data);
+	const auto schemaAction = vsp::ClassifyConfigSchema(storedSchema);
+	configSchemaTooNew = false;
+	loadedConfigSchema = storedSchema;
+
+	if (schemaAction == vsp::ConfigSchemaAction::RefuseDowngrade) {
+		configSchemaTooNew = true;
+		loadedConfigSchema = storedSchema;
+		blog(LOG_WARNING,
+		     "[obs-shorts-vertical] Config schema %d is newer than plugin schema %d; "
+		     "loading best-effort without downgrading",
+		     storedSchema, vsp::kConfigSchemaVersion);
+	} else if (schemaAction == vsp::ConfigSchemaAction::MigrateForward) {
+		if (!vsp::BackupConfigBlob(data, "pre-schema-migration")) {
+			blog(LOG_WARNING,
+			     "[obs-shorts-vertical] Could not write config backup before schema migration");
+		}
+		vsp::MigrateConfigSchema(data, storedSchema, vsp::kConfigSchemaVersion);
+		loadedConfigSchema = vsp::kConfigSchemaVersion;
+	} else {
+		loadedConfigSchema = storedSchema > 0 ? storedSchema : vsp::kConfigSchemaVersion;
+	}
 
 	settings = vsp::LoadSettingsFromData(data, verticalWidth, verticalHeight);
 	vsp::EnsureDefaultDestinations(settings);

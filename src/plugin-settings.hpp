@@ -1,5 +1,8 @@
 #pragma once
 
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QList>
 #include <QString>
@@ -13,6 +16,7 @@
 /* Test build: avoid linking OBS */
 #else
 #include <obs-frontend-api.h>
+#include <obs-module.h>
 #include <obs.hpp>
 #include <util/config-file.h>
 #endif
@@ -22,6 +26,49 @@ namespace vsp {
 /* Safety ceiling for the shared vertical clip buffer (15 minutes). */
 constexpr int kMaxClipBufferSeconds = 900;
 constexpr int kMemoryWarnClipSeconds = 300; /* warn when custom exceeds 5 minutes */
+
+/*
+ * Configuration schema version — independent from the plugin product version.
+ *
+ * Example: plugin 1.0.5 may ship schema 1; a future 2.0.0 may require schema 2.
+ * Bump kConfigSchemaVersion only when the persisted settings shape changes and
+ * a forward migration is required. Never auto-downgrade a newer schema.
+ */
+constexpr int kConfigSchemaVersion = 1;
+
+enum class ConfigSchemaAction {
+	None = 0,
+	MigrateForward,
+	RefuseDowngrade,
+};
+
+inline ConfigSchemaAction ClassifyConfigSchema(int storedSchema,
+					       int pluginSchema = kConfigSchemaVersion)
+{
+	if (storedSchema < 0)
+		storedSchema = 0;
+	if (storedSchema < pluginSchema)
+		return ConfigSchemaAction::MigrateForward;
+	if (storedSchema > pluginSchema)
+		return ConfigSchemaAction::RefuseDowngrade;
+	return ConfigSchemaAction::None;
+}
+
+#ifdef VSP_SETTINGS_TEST
+inline int ReadConfigSchema(void *)
+{
+	return 0;
+}
+#else
+inline int ReadConfigSchema(obs_data_t *data)
+{
+	if (!data)
+		return 0;
+	if (!obs_data_has_user_value(data, "config_schema"))
+		return 0; /* pre-schema installs */
+	return (int)obs_data_get_int(data, "config_schema");
+}
+#endif
 
 enum class CanvasPreset {
 	YouTubeVertical = 0,
@@ -417,9 +464,75 @@ inline PluginSettings LoadSettingsFromData(void *, uint32_t &canvasW, uint32_t &
 	canvasH = 1920;
 	return s;
 }
+inline bool BackupConfigBlob(void *, const char *)
+{
+	return true;
+}
+inline void MigrateConfigSchema(void *, int fromSchema, int toSchema)
+{
+	(void)fromSchema;
+	(void)toSchema;
+}
 #else
+/*
+ * Lightweight JSON backup under plugin_config before a schema migration.
+ * Never deletes the original blob; caller keeps using `data` in-place.
+ */
+inline bool BackupConfigBlob(obs_data_t *data, const char *reason)
+{
+	if (!data)
+		return false;
+
+	char *dir = obs_module_get_config_path(obs_current_module(), "backups");
+	if (!dir)
+		return false;
+
+	QString backupDir = QString::fromUtf8(dir);
+	bfree(dir);
+	QDir().mkpath(backupDir);
+
+	const QString stamp =
+		QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_hhmmss"));
+	const QString path =
+		backupDir + QStringLiteral("/config_schema_") + stamp + QStringLiteral(".json");
+
+	const char *json = obs_data_get_json(data);
+	if (!json)
+		return false;
+
+	QFile f(path);
+	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		return false;
+	f.write(json);
+	if (reason && *reason) {
+		f.write("\n/* reason: ");
+		f.write(reason);
+		f.write(" */\n");
+	}
+	f.close();
+	blog(LOG_INFO, "[obs-shorts-vertical] Config backup written: %s", path.toUtf8().constData());
+	return true;
+}
+
+/* Forward-migrate persisted settings. Keep older keys until startup validates. */
+inline void MigrateConfigSchema(obs_data_t *data, int fromSchema, int toSchema)
+{
+	if (!data || fromSchema >= toSchema)
+		return;
+
+	/*
+	 * Schema 0 → 1: introduce config_schema. Field-level legacy key migrations
+	 * (clip_preset → short_clip_preset, etc.) already run inside LoadSettingsFromData.
+	 * Future bumps add staged transforms here; never delete the pre-migration backup
+	 * until a successful plugin startup has rewritten settings.
+	 */
+	obs_data_set_int(data, "config_schema", toSchema);
+	blog(LOG_INFO, "[obs-shorts-vertical] Migrated config schema %d → %d", fromSchema, toSchema);
+}
+
 inline void SaveSettingsToData(obs_data_t *data, const PluginSettings &s, uint32_t canvasW, uint32_t canvasH)
 {
+	obs_data_set_int(data, "config_schema", kConfigSchemaVersion);
 	obs_data_set_int(data, "canvas_preset", static_cast<int>(s.canvasPreset));
 	obs_data_set_int(data, "custom_width", s.customWidth);
 	obs_data_set_int(data, "custom_height", s.customHeight);
