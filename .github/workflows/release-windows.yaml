@@ -199,7 +199,7 @@ jobs:
           )
           cat release-assets/SHA256SUMS.txt
 
-      - name: Remove stale GitHub Release assets
+      - name: Replace stale GitHub Release record
         if: steps.check.outputs.valid == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -207,24 +207,27 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
-          # Resolve by tag_name (not /releases/tags/{tag}) so a retargeted tag
-          # still finds the existing GitHub Release and can drop stale assets.
-          RELEASE_ID="$(gh api "repos/${REPO}/releases?per_page=100" \
-            --jq ".[] | select(.tag_name==\"${TAG}\") | .id" | head -n1 || true)"
-          if [[ -z "${RELEASE_ID}" ]]; then
-            echo "No existing GitHub Release for tag ${TAG} — nothing to prune."
+          # softprops can reuse an old release id after a tag retarget and keep the
+          # previous body ("Last Updated"). Delete every release record for this tag
+          # (assets included) while keeping the git tag, then recreate cleanly.
+          mapfile -t RELEASE_IDS < <(gh api "repos/${REPO}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name==\"${TAG}\") | .id")
+          if [[ ${#RELEASE_IDS[@]} -eq 0 ]]; then
+            echo "No existing GitHub Release for tag ${TAG} — nothing to replace."
             exit 0
           fi
-          echo "Pruning assets on release id=${RELEASE_ID} (tag ${TAG})"
-          mapfile -t ASSET_IDS < <(gh api "repos/${REPO}/releases/${RELEASE_ID}" --jq '.assets[].id')
-          if [[ ${#ASSET_IDS[@]} -eq 0 ]]; then
-            echo "Release ${TAG} has no assets to remove."
-            exit 0
-          fi
-          for id in "${ASSET_IDS[@]}"; do
+          for id in "${RELEASE_IDS[@]}"; do
             [[ -z "${id}" ]] && continue
-            echo "Deleting stale release asset id=${id}"
-            gh api -X DELETE "repos/${REPO}/releases/assets/${id}"
+            echo "Deleting stale GitHub Release id=${id} for tag ${TAG}"
+            gh api -X DELETE "repos/${REPO}/releases/${id}"
+          done
+          # Also drop any leftover draft with the same tag_name.
+          mapfile -t DRAFT_IDS < <(gh api "repos/${REPO}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name==\"${TAG}\" and .draft==true) | .id" || true)
+          for id in "${DRAFT_IDS[@]+"${DRAFT_IDS[@]}"}"; do
+            [[ -z "${id}" ]] && continue
+            echo "Deleting leftover draft release id=${id}"
+            gh api -X DELETE "repos/${REPO}/releases/${id}" || true
           done
 
       - name: Write release notes
