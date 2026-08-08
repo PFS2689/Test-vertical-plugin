@@ -404,14 +404,11 @@ void VerticalSourcesDock::ShowSourceContextMenu(const QPoint &globalPos)
 	QAction *editTf =
 		transformMenu->addAction(Translate("EditTransform"), workspace, &ShortsDock::RequestEditTransform);
 	editTf->setToolTip(Translate("EditTransformTip"));
-	transformMenu->addAction(Translate("CopyTransform"), workspace, &ShortsDock::RequestCopyTransform);
-	QAction *pasteTf =
-		transformMenu->addAction(Translate("PasteTransform"), workspace, &ShortsDock::RequestPasteTransform);
-	pasteTf->setEnabled(workspace->HasTransformClipboard());
-	transformMenu->addAction(Translate("ResetTransform"), workspace, &ShortsDock::RequestResetTransform);
 	transformMenu->addSeparator();
+	/* Fit / Fill / Center — primary canvas sizing (must visibly resize). */
 	workspace->AppendTransformFitMenu(transformMenu);
 	transformMenu->addSeparator();
+	transformMenu->addAction(Translate("ResetTransform"), workspace, &ShortsDock::RequestResetTransform);
 	transformMenu->addAction(Translate("Rotate90CW"), workspace, [this]() {
 		if (workspace)
 			workspace->RequestRotateDegrees(90.0f);
@@ -426,8 +423,6 @@ void VerticalSourcesDock::ShowSourceContextMenu(const QPoint &globalPos)
 	});
 	transformMenu->addAction(Translate("FlipHorizontal"), workspace, &ShortsDock::RequestFlipHorizontal);
 	transformMenu->addAction(Translate("FlipVertical"), workspace, &ShortsDock::RequestFlipVertical);
-	transformMenu->addSeparator();
-	transformMenu->addAction(Translate("Crop"), workspace, &ShortsDock::RequestCropDialog);
 
 	menu.addSeparator();
 	menu.addAction(Translate("RenameSource"), workspace, &ShortsDock::RequestRenameSource);
