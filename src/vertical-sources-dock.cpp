@@ -282,11 +282,14 @@ void VerticalSourcesDock::ShowSourceContextMenu(const QPoint &globalPos)
 
 	QAction *props = menu.addAction(Translate("SourceProperties"), workspace, &ShortsDock::RequestSourceProperties);
 	props->setEnabled(configurable);
-	menu.addAction(Translate("SourceFilters"), workspace, &ShortsDock::RequestSourceFilters);
+	props->setToolTip(Translate("SourcePropertiesTip"));
+	QAction *filters = menu.addAction(Translate("SourceFilters"), workspace, &ShortsDock::RequestSourceFilters);
+	filters->setToolTip(Translate("SourceFiltersTip"));
 	menu.addSeparator();
 
 	QMenu *transformMenu = menu.addMenu(Translate("Transform"));
-	transformMenu->addAction(Translate("EditTransform"), workspace, &ShortsDock::RequestEditTransform);
+	QAction *editTf = transformMenu->addAction(Translate("EditTransform"), workspace, &ShortsDock::RequestEditTransform);
+	editTf->setToolTip(Translate("EditTransformTip"));
 	transformMenu->addAction(Translate("CopyTransform"), workspace, &ShortsDock::RequestCopyTransform);
 	QAction *pasteTf =
 		transformMenu->addAction(Translate("PasteTransform"), workspace, &ShortsDock::RequestPasteTransform);

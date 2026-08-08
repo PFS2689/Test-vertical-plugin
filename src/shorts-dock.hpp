@@ -29,6 +29,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #define ITEM_LEFT (1 << 0)
@@ -236,6 +237,13 @@ private:
 	void EmitSourceUiChanged();
 	obs_source_t *EnsureVerticalTransitionSource(const QString &name);
 	obs_sceneitem_t *AddSourceToActiveScene(obs_source_t *source, bool fitIfSized);
+	/* Camera-sharing: create or reuse a Video Capture Device without a second HW open. */
+	void CreateOrShareCaptureSource(const std::string &typeId, const QString &label);
+	void WatchCaptureSourceForShare(obs_source_t *created);
+	void ResolveSharedCapture(OBSSource created);
+	void RemoveVerticalItemsForSource(obs_source_t *source);
+	bool TryShareCaptureFromSettings(const char *typeId, obs_data_t *settings, const char *logReason);
+	void NotifySharedCameraFeed();
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -309,6 +317,7 @@ private:
 	bool clearing = false;
 	bool loadingSettings = false;
 	bool shuttingDown = false;
+	bool sharedCameraNoticeShown = false;
 	/* Config schema tracking (independent from PLUGIN_VERSION). */
 	int loadedConfigSchema = 0;
 	bool configSchemaTooNew = false;

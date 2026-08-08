@@ -48,6 +48,8 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin-main.cpp
+    src/capture-source-share.cpp
+    src/capture-source-share.hpp
     src/shorts-dock.cpp
     src/shorts-dock.hpp
     src/vertical-production-dock.cpp
