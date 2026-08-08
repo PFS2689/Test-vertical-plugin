@@ -1,7 +1,5 @@
 #include "shorts-dock.hpp"
-#include "vertical-scenes-dock.hpp"
-#include "vertical-sources-dock.hpp"
-#include "vertical-transitions-dock.hpp"
+#include "vertical-production-dock.hpp"
 #include "plugin-support.h"
 
 #include <obs-frontend-api.h>
@@ -31,9 +29,11 @@ static bool g_tools_menu_registered = false;
 static bool g_docks_registered = false;
 
 static const char *DOCK_CANVAS = "vertical_shorts_plugin_dock";
-static const char *DOCK_SCENES = "vertical_shorts_scenes_dock";
-static const char *DOCK_SOURCES = "vertical_shorts_sources_dock";
-static const char *DOCK_TRANSITIONS = "vertical_shorts_transitions_dock";
+static const char *DOCK_PRODUCTION = "vertical_shorts_production_dock";
+/* Legacy IDs — removed on unload so old scene collections do not leave ghost docks. */
+static const char *DOCK_SCENES_LEGACY = "vertical_shorts_scenes_dock";
+static const char *DOCK_SOURCES_LEGACY = "vertical_shorts_sources_dock";
+static const char *DOCK_TRANSITIONS_LEGACY = "vertical_shorts_transitions_dock";
 
 static void SaveCallback(obs_data_t *save_data, bool saving, void *)
 {
@@ -76,6 +76,7 @@ static void OnToolsShowDock(void *)
 		return;
 	}
 	ShowDockById(DOCK_CANVAS);
+	ShowDockById(DOCK_PRODUCTION);
 }
 
 static void RegisterToolsMenu()
@@ -115,19 +116,19 @@ static void RegisterDocks()
 		return;
 	}
 
+	/* Drop legacy three-dock layout if present from older builds. */
+	obs_frontend_remove_dock(DOCK_TRANSITIONS_LEGACY);
+	obs_frontend_remove_dock(DOCK_SOURCES_LEGACY);
+	obs_frontend_remove_dock(DOCK_SCENES_LEGACY);
+
 	auto *workspace = new ShortsDock(main);
 	if (!AddDock(DOCK_CANVAS, "ShortsDock", "Vertical Shorts", workspace))
 		return;
 	g_workspace = workspace;
 
-	if (!AddDock(DOCK_SCENES, "VerticalScenesDock", "Vertical Scenes", new VerticalScenesDock(workspace, main))) {
-		/* Canvas already registered — keep workspace pointer. */
-	}
-	if (!AddDock(DOCK_SOURCES, "VerticalSourcesDock", "Vertical Sources",
-		     new VerticalSourcesDock(workspace, main))) {
-	}
-	if (!AddDock(DOCK_TRANSITIONS, "VerticalTransitionsDock", "Vertical Transitions",
-		     new VerticalTransitionsDock(workspace, main))) {
+	if (!AddDock(DOCK_PRODUCTION, "VerticalProductionDock", "Vertical Production",
+		     new VerticalProductionDock(workspace, main))) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] Vertical Production dock failed to register");
 	}
 
 	g_docks_registered = true;
@@ -140,11 +141,9 @@ static void RegisterDocks()
 	RegisterToolsMenu();
 
 	ShowDockById(DOCK_CANVAS);
-	ShowDockById(DOCK_SCENES);
-	ShowDockById(DOCK_SOURCES);
-	ShowDockById(DOCK_TRANSITIONS);
+	ShowDockById(DOCK_PRODUCTION);
 
-	blog(LOG_INFO, "[obs-shorts-vertical] Native docks registered (canvas, scenes, sources, transitions)");
+	blog(LOG_INFO, "[obs-shorts-vertical] Native docks registered (Vertical Shorts + Vertical Production)");
 }
 
 static void FrontendEvent(enum obs_frontend_event event, void *)
@@ -192,10 +191,11 @@ void obs_module_unload(void)
 	}
 
 	if (g_docks_registered) {
-		obs_frontend_remove_dock(DOCK_TRANSITIONS);
-		obs_frontend_remove_dock(DOCK_SOURCES);
-		obs_frontend_remove_dock(DOCK_SCENES);
+		obs_frontend_remove_dock(DOCK_PRODUCTION);
 		obs_frontend_remove_dock(DOCK_CANVAS);
+		obs_frontend_remove_dock(DOCK_TRANSITIONS_LEGACY);
+		obs_frontend_remove_dock(DOCK_SOURCES_LEGACY);
+		obs_frontend_remove_dock(DOCK_SCENES_LEGACY);
 		g_workspace = nullptr;
 		g_docks_registered = false;
 	}

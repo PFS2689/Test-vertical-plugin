@@ -16,12 +16,10 @@ Professional Vertical Streaming Plugin for OBS Studio — vertical production do
 
 Native OBS docks (View → Docks):
 
-- **Vertical Shorts** — large vertical canvas + Go Live / Record / Short Clip / Long Clip / Settings
-- **Vertical Scenes** — vertical-only scene list (does not change horizontal Scenes)
-- **Vertical Sources** — sources/transform for the active vertical scene only
-- **Vertical Transitions** — vertical transition type, duration, preview/trigger
+- **Vertical Shorts** — vertical canvas + emoji controls (🟢 ⏺️ 📸 📷 ⚙️)
+- **Vertical Production** — Vertical Scenes, Sources, Transitions, and transition duration
 
-Settings uses an OBS-style dialog (pages left, categories right, OK / Cancel / Apply) with General, Vertical Canvas, Vertical Recording, Vertical Clips, Recording Automation, Vertical Streaming, Audio, Hotkeys, Advanced, and About.
+Settings uses categories on the left and pages on the right (OK / Cancel / Apply) with General, Vertical Canvas, Vertical Recording, Vertical Clips, Recording Automation, Vertical Streaming, Audio, and About.
 
 - **Independent Vertical Streaming Destination** (YouTube / Twitch / TikTok / Instagram / Custom RTMP) — never inherits the main OBS stream key or service
 - Clip buffer, recording automation, and hotkeys
