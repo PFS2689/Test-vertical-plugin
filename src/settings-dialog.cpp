@@ -423,7 +423,7 @@ bool SettingsDialog::UiDiffersFromBaseline() const
 		return true;
 	if (destNameEdit && destNameEdit->text().trimmed() != baselineDest.name)
 		return true;
-	if (verticalServerEdit && verticalServerEdit->text().trimmed() != baselineDest.serverUrl)
+	if (verticalServerEdit && verticalServerEdit->text().trimmed() != baselineDest.server)
 		return true;
 	if (verticalKeyEdit && verticalKeyEdit->text() != baselineDest.streamKey)
 		return true;
