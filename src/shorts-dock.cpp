@@ -467,24 +467,44 @@ void ShortsDock::BuildUI()
 	connect(recordBtn, &QPushButton::clicked, this, &ShortsDock::OnRecord);
 
 	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8"), controlsBar);
-	shortClipBtn->setToolTip(Translate("ShortClip"));
+	shortClipBtn->setToolTip(Translate("ShortClipTip"));
 	shortClipBtn->setAccessibleName(Translate("ShortClip"));
 	connect(shortClipBtn, &QPushButton::clicked, this, &ShortsDock::OnShortClip);
 
+	shortClipPresetCombo = new QComboBox(controlsBar);
+	shortClipPresetCombo->setObjectName(QStringLiteral("vsShortClipPreset"));
+	shortClipPresetCombo->setToolTip(Translate("ShortClipLength"));
+	shortClipPresetCombo->setAccessibleName(Translate("ShortClipLength"));
+	shortClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	connect(shortClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&ShortsDock::OnShortClipPresetChanged);
+
 	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7"), controlsBar);
-	longClipBtn->setToolTip(Translate("LongClip"));
+	longClipBtn->setToolTip(Translate("LongClipTip"));
 	longClipBtn->setAccessibleName(Translate("LongClip"));
 	connect(longClipBtn, &QPushButton::clicked, this, &ShortsDock::OnLongClip);
+
+	longClipPresetCombo = new QComboBox(controlsBar);
+	longClipPresetCombo->setObjectName(QStringLiteral("vsLongClipPreset"));
+	longClipPresetCombo->setToolTip(Translate("LongClipLength"));
+	longClipPresetCombo->setAccessibleName(Translate("LongClipLength"));
+	longClipPresetCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+	connect(longClipPresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		&ShortsDock::OnLongClipPresetChanged);
 
 	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F"), controlsBar);
 	settingsBtn->setToolTip(Translate("Settings"));
 	settingsBtn->setAccessibleName(Translate("Settings"));
 	connect(settingsBtn, &QPushButton::clicked, this, &ShortsDock::OnSettings);
 
+	SyncClipPresetControls();
+
 	bar->addWidget(goLiveBtn);
 	bar->addWidget(recordBtn);
 	bar->addWidget(shortClipBtn);
+	bar->addWidget(shortClipPresetCombo);
 	bar->addWidget(longClipBtn);
+	bar->addWidget(longClipPresetCombo);
 	bar->addWidget(settingsBtn);
 	bar->addStretch(1);
 	root->addWidget(controlsBar, 0);
@@ -1450,6 +1470,114 @@ void ShortsDock::OnLongClip()
 	HandleClipSaveResult(outputs->SaveLongClip(), ClipKind::Long);
 }
 
+void ShortsDock::PopulateClipPresetCombos()
+{
+	if (!shortClipPresetCombo || !longClipPresetCombo)
+		return;
+
+	shortClipPresetCombo->clear();
+	shortClipPresetCombo->addItem(Translate("Clip10"), (int)vsp::ShortClipPreset::Sec10);
+	shortClipPresetCombo->addItem(Translate("Clip20"), (int)vsp::ShortClipPreset::Sec20);
+	shortClipPresetCombo->addItem(Translate("Clip30"), (int)vsp::ShortClipPreset::Sec30);
+	shortClipPresetCombo->addItem(Translate("Clip60"), (int)vsp::ShortClipPreset::Sec60);
+	if (settings.shortClipPreset == vsp::ShortClipPreset::Custom) {
+		shortClipPresetCombo->addItem(Translate("ClipCustom") +
+						      QStringLiteral(" (%1s)").arg(settings.customShortClipSeconds),
+					      (int)vsp::ShortClipPreset::Custom);
+	}
+
+	longClipPresetCombo->clear();
+	longClipPresetCombo->addItem(Translate("LongClip2Min"), (int)vsp::LongClipPreset::Min2);
+	longClipPresetCombo->addItem(Translate("LongClip3Min"), (int)vsp::LongClipPreset::Min3);
+	longClipPresetCombo->addItem(Translate("LongClip4Min"), (int)vsp::LongClipPreset::Min4);
+	longClipPresetCombo->addItem(Translate("LongClip5Min"), (int)vsp::LongClipPreset::Min5);
+	if (settings.longClipPreset == vsp::LongClipPreset::Custom) {
+		const int mins = settings.customLongClipSeconds / 60;
+		const int secs = settings.customLongClipSeconds % 60;
+		longClipPresetCombo->addItem(Translate("LongClipCustom") +
+						     QStringLiteral(" (%1:%2)")
+							     .arg(mins)
+							     .arg(secs, 2, 10, QLatin1Char('0')),
+					     (int)vsp::LongClipPreset::Custom);
+	}
+}
+
+void ShortsDock::SyncClipPresetControls()
+{
+	if (!shortClipPresetCombo || !longClipPresetCombo)
+		return;
+
+	syncingClipPresets = true;
+	PopulateClipPresetCombos();
+
+	auto selectPreset = [](QComboBox *combo, int value) {
+		const int idx = combo->findData(value);
+		if (idx >= 0)
+			combo->setCurrentIndex(idx);
+		else if (combo->count() > 0)
+			combo->setCurrentIndex(0);
+	};
+
+	selectPreset(shortClipPresetCombo, (int)settings.shortClipPreset);
+	selectPreset(longClipPresetCombo, (int)settings.longClipPreset);
+
+	const int shortSec = vsp::EffectiveShortClipSeconds(settings);
+	const int longSec = vsp::EffectiveLongClipSeconds(settings);
+	if (shortClipBtn) {
+		shortClipBtn->setToolTip(Translate("ShortClipTip") + QStringLiteral(" — ") +
+					 QString::number(shortSec) + QStringLiteral("s"));
+	}
+	if (longClipBtn) {
+		longClipBtn->setToolTip(Translate("LongClipTip") + QStringLiteral(" — ") +
+					QString::number(longSec / 60) + QStringLiteral("m") +
+					((longSec % 60) ? QStringLiteral("%1s").arg(longSec % 60, 2, 10, QLatin1Char('0'))
+							: QString()));
+	}
+
+	syncingClipPresets = false;
+}
+
+void ShortsDock::ApplyClipPresetChange()
+{
+	bool restartBuffer = false;
+	if (outputs)
+		outputs->ApplySettings(settings, &restartBuffer);
+
+	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
+		const auto reply = QMessageBox::question(this, Translate("Settings"), Translate("BufferRestartWarning"),
+							 QMessageBox::Yes | QMessageBox::No);
+		if (reply == QMessageBox::Yes) {
+			outputs->StopClipBuffer();
+			QString err;
+			outputs->EnsureClipBuffer(&err);
+		}
+	} else {
+		EnsureBufferIfConfigured();
+	}
+
+	SyncClipPresetControls();
+	obs_frontend_save();
+}
+
+void ShortsDock::OnShortClipPresetChanged(int index)
+{
+	if (syncingClipPresets || !shortClipPresetCombo || index < 0)
+		return;
+
+	settings.shortClipPreset =
+		static_cast<vsp::ShortClipPreset>(shortClipPresetCombo->itemData(index).toInt());
+	ApplyClipPresetChange();
+}
+
+void ShortsDock::OnLongClipPresetChanged(int index)
+{
+	if (syncingClipPresets || !longClipPresetCombo || index < 0)
+		return;
+
+	settings.longClipPreset = static_cast<vsp::LongClipPreset>(longClipPresetCombo->itemData(index).toInt());
+	ApplyClipPresetChange();
+}
+
 void ShortsDock::HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind)
 {
 	const QString title = Translate(kind == ClipKind::Long ? "LongClip" : "ShortClip");
@@ -1538,6 +1666,8 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 	} else {
 		EnsureBufferIfConfigured();
 	}
+
+	SyncClipPresetControls();
 }
 
 void ShortsDock::OnStreamingChanged(bool active)
@@ -1751,6 +1881,7 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 		RequestSelectScene(QString::fromUtf8(active));
 	EmitSceneUiChanged();
 	emit verticalTransitionsChanged();
+	SyncClipPresetControls();
 }
 
 void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data)

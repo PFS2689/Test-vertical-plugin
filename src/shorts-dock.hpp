@@ -130,6 +130,8 @@ private slots:
 	void OnRecord();
 	void OnShortClip();
 	void OnLongClip();
+	void OnShortClipPresetChanged(int index);
+	void OnLongClipPresetChanged(int index);
 	void OnSettings();
 	void OpenSettingsStreaming(bool focusStreaming = true);
 	void OnStreamingChanged(bool active);
@@ -154,6 +156,9 @@ private:
 	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;
 	QString ActiveSceneUuid() const;
 	void HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind);
+	void PopulateClipPresetCombos();
+	void SyncClipPresetControls();
+	void ApplyClipPresetChange();
 	void RegisterHotkeys();
 	void UnregisterHotkeys();
 	void SaveHotkeys(obs_data_t *data) const;
@@ -190,8 +195,11 @@ private:
 	QPushButton *goLiveBtn = nullptr;
 	QPushButton *recordBtn = nullptr;
 	QPushButton *shortClipBtn = nullptr;
+	QComboBox *shortClipPresetCombo = nullptr;
 	QPushButton *longClipBtn = nullptr;
+	QComboBox *longClipPresetCombo = nullptr;
 	QPushButton *settingsBtn = nullptr;
+	bool syncingClipPresets = false;
 
 	/* Shared state */
 	vsp::PluginSettings settings;

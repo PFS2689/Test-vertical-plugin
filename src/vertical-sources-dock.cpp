@@ -4,12 +4,8 @@
 #include <obs-module.h>
 
 #include <QAbstractItemView>
-#include <QDoubleSpinBox>
-#include <QGridLayout>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QListWidget>
-#include <QPushButton>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -40,9 +36,7 @@ VerticalSourcesDock::VerticalSourcesDock(ShortsDock *workspace_, QWidget *parent
 
 	if (workspace) {
 		connect(workspace, &ShortsDock::verticalSourcesChanged, this, &VerticalSourcesDock::RefreshSources);
-		connect(workspace, &ShortsDock::verticalTransformChanged, this, &VerticalSourcesDock::RefreshTransform);
 		RefreshSources();
-		RefreshTransform();
 	}
 }
 
@@ -78,52 +72,6 @@ void VerticalSourcesDock::BuildUI()
 		sourceBtns->addWidget(b);
 	sourceBtns->addStretch(1);
 	root->addLayout(sourceBtns);
-
-	auto *form = new QGridLayout();
-	posXSpin = new QDoubleSpinBox(this);
-	posYSpin = new QDoubleSpinBox(this);
-	sizeWSpin = new QDoubleSpinBox(this);
-	sizeHSpin = new QDoubleSpinBox(this);
-	rotSpin = new QDoubleSpinBox(this);
-	for (auto *spin : {posXSpin, posYSpin, sizeWSpin, sizeHSpin}) {
-		spin->setRange(-100000.0, 100000.0);
-		spin->setDecimals(1);
-		spin->setSingleStep(1.0);
-		connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-			&VerticalSourcesDock::OnTransformEdited);
-	}
-	rotSpin->setRange(-360.0, 360.0);
-	rotSpin->setDecimals(1);
-	rotSpin->setSingleStep(1.0);
-	connect(rotSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
-		&VerticalSourcesDock::OnTransformEdited);
-
-	form->addWidget(new QLabel(Translate("PositionX"), this), 0, 0);
-	form->addWidget(posXSpin, 0, 1);
-	form->addWidget(new QLabel(Translate("PositionY"), this), 0, 2);
-	form->addWidget(posYSpin, 0, 3);
-	form->addWidget(new QLabel(Translate("SizeW"), this), 1, 0);
-	form->addWidget(sizeWSpin, 1, 1);
-	form->addWidget(new QLabel(Translate("SizeH"), this), 1, 2);
-	form->addWidget(sizeHSpin, 1, 3);
-	form->addWidget(new QLabel(Translate("Rotation"), this), 2, 0);
-	form->addWidget(rotSpin, 2, 1);
-	root->addLayout(form);
-
-	auto *transformButtons = new QHBoxLayout();
-	auto *fitBtn = new QPushButton(Translate("FitToScreen"), this);
-	auto *stretchBtn = new QPushButton(Translate("StretchToScreen"), this);
-	auto *centerBtn = new QPushButton(Translate("CenterToScreen"), this);
-	auto *resetBtn = new QPushButton(Translate("ResetTransform"), this);
-	connect(fitBtn, &QPushButton::clicked, this, &VerticalSourcesDock::OnFitToScreen);
-	connect(stretchBtn, &QPushButton::clicked, this, &VerticalSourcesDock::OnStretchToScreen);
-	connect(centerBtn, &QPushButton::clicked, this, &VerticalSourcesDock::OnCenterToScreen);
-	connect(resetBtn, &QPushButton::clicked, this, &VerticalSourcesDock::OnResetTransform);
-	transformButtons->addWidget(fitBtn);
-	transformButtons->addWidget(stretchBtn);
-	transformButtons->addWidget(centerBtn);
-	transformButtons->addWidget(resetBtn);
-	root->addLayout(transformButtons);
 }
 
 void VerticalSourcesDock::RefreshSources()
@@ -134,16 +82,6 @@ void VerticalSourcesDock::RefreshSources()
 	refreshing = true;
 	workspace->PopulateSourcesList(sourcesList);
 	refreshing = false;
-}
-
-void VerticalSourcesDock::RefreshTransform()
-{
-	if (!workspace)
-		return;
-
-	updatingTransform = true;
-	workspace->PopulateTransformControls(posXSpin, posYSpin, sizeWSpin, sizeHSpin, rotSpin);
-	updatingTransform = false;
 }
 
 void VerticalSourcesDock::OnSelectionChanged()
@@ -205,37 +143,4 @@ void VerticalSourcesDock::OnMoveDown()
 {
 	if (workspace)
 		workspace->RequestSourceMoveDown();
-}
-
-void VerticalSourcesDock::OnFitToScreen()
-{
-	if (workspace)
-		workspace->RequestFitToScreen();
-}
-
-void VerticalSourcesDock::OnStretchToScreen()
-{
-	if (workspace)
-		workspace->RequestStretchToScreen();
-}
-
-void VerticalSourcesDock::OnCenterToScreen()
-{
-	if (workspace)
-		workspace->RequestCenterToScreen();
-}
-
-void VerticalSourcesDock::OnResetTransform()
-{
-	if (workspace)
-		workspace->RequestResetTransform();
-}
-
-void VerticalSourcesDock::OnTransformEdited()
-{
-	if (updatingTransform || !workspace)
-		return;
-
-	workspace->RequestTransformEdited(posXSpin->value(), posYSpin->value(), sizeWSpin->value(),
-					  sizeHSpin->value(), rotSpin->value());
 }
