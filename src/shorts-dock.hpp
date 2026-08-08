@@ -154,6 +154,11 @@ private:
 	obs_scene_t *CreateVerticalScene(const char *name);
 	void SetCanvasSize(uint32_t width, uint32_t height);
 	void SetActiveScene(obs_scene_t *newScene, bool withTransition);
+	/* Keep PROGRAM channel 0 bound to the active vertical scene (activation path). */
+	void EnsureCanvasProgramChannel(bool forceRebind = false);
+	void LogRenderPipeline(const char *reason);
+	void FitSceneItemToCanvas(obs_sceneitem_t *item);
+	void ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft);
 	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;
 	QString ActiveSceneUuid() const;
 	void HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind);
@@ -260,6 +265,9 @@ private:
 	matrix4 itemToScreen{};
 
 	gs_vertbuffer_t *rectFill = nullptr;
+	gs_vertbuffer_t *box = nullptr; /* dark preview backdrop (OBS-style) */
+	uint64_t drawCallbackCount = 0;
+	uint64_t lastPipelineLogNs = 0;
 
 	obs_hotkey_id hkShortClip = OBS_INVALID_HOTKEY_ID;
 	obs_hotkey_id hkLongClip = OBS_INVALID_HOTKEY_ID;
