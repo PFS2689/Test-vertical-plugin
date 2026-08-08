@@ -34,6 +34,7 @@ Includes:
 - Vertical canvas audio no longer uses `MIX_AUDIO` (independent from main program mix)
 - **In-place upgrades:** permanent Inno Setup AppId; Setup detects an existing install, offers Upgrade/Cancel, requires OBS closed, backs up lightweight metadata, replaces binaries only, and preserves destinations/credentials/scenes/settings
 - Configuration `config_schema` (independent from plugin version) with forward migration + backup; never auto-downgrades
+- Release metadata uses a fresh UTC build/publish stamp (About dialog, `install-meta.ini`, GitHub Release notes) so “Last Updated” is never inherited from an older 1.0.5 artifact
 
 ---
 

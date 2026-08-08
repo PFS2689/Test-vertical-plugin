@@ -412,6 +412,8 @@ begin
     SetIniString('Install', 'DisplayVersion', '{#MyAppVersion}', MetaPath);
     SetIniString('Install', 'AppId', '{' + '{#MyAppIdGuid}' + '}', MetaPath);
     SetIniString('Install', 'InstallDir', ExpandConstant('{app}'), MetaPath);
+    SetIniString('Install', 'InstalledTimestampUtc',
+      GetDateTimeString('yyyy-mm-dd"T"hh:nn:ss"Z"', #0, #0), MetaPath);
     SetIniString('Install', 'UpgradeBackup', GUpgradeBackupDir, MetaPath);
     SetIniString('Install', 'ConfigLocation',
       'OBS scene collection key obs-shorts-vertical + Windows Credential Manager', MetaPath);

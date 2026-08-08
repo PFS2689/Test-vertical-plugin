@@ -23,7 +23,7 @@ BEGIN
             VALUE "OriginalFilename", "obs-shorts-vertical.dll"
             VALUE "ProductName", "Vertical Shorts Plugin"
             VALUE "ProductVersion", "${PROJECT_VERSION}"
-            VALUE "Comments", "Open-source OBS Studio plugin. Source: https://github.com/PFS2689/verticalshorts"
+            VALUE "Comments", "Open-source OBS Studio plugin. Built ${PLUGIN_BUILD_TIMESTAMP}. Source: https://github.com/PFS2689/verticalshorts"
         END
     END
     BLOCK "VarFileInfo"

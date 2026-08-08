@@ -58,6 +58,12 @@ set(PLUGIN_EMAIL ${_email})
 set(PLUGIN_VERSION ${_version})
 set(MACOS_BUNDLEID ${_bundleId})
 
+# Fresh UTC stamp at configure time — never hard-code a release "Last Updated" date.
+# Override from CI with -DPLUGIN_BUILD_TIMESTAMP=... when needed.
+if(NOT PLUGIN_BUILD_TIMESTAMP)
+  string(TIMESTAMP PLUGIN_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+endif()
+
 string(REPLACE "." ";" _version_canonical "${_version}")
 list(GET _version_canonical 0 PLUGIN_VERSION_MAJOR)
 list(GET _version_canonical 1 PLUGIN_VERSION_MINOR)

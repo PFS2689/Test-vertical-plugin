@@ -70,6 +70,11 @@ function Build {
         '--config', $Configuration
     )
 
+    # Fresh UTC stamp for this CI configure — avoids inheriting stale "Last Updated" metadata.
+    $BuildStamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $CmakeArgs += "-DPLUGIN_BUILD_TIMESTAMP=$BuildStamp"
+    Write-Host "PLUGIN_BUILD_TIMESTAMP=$BuildStamp"
+
     Log-Group "Configuring ${ProductName}..."
     Invoke-External cmake @CmakeArgs
 

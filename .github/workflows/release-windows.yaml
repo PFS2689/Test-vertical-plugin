@@ -199,6 +199,29 @@ jobs:
           )
           cat release-assets/SHA256SUMS.txt
 
+      - name: Remove stale GitHub Release assets
+        if: steps.check.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Drop every existing asset on this tag so names/checksums/dates are not
+          # inherited from an older 1.0.5 publish (e.g. hyphenated MSVC Setup.exe).
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "No existing GitHub Release for $TAG — nothing to prune."
+            exit 0
+          fi
+          mapfile -t ASSET_IDS < <(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].id')
+          if [[ ${#ASSET_IDS[@]} -eq 0 ]]; then
+            echo "Release $TAG has no assets to remove."
+            exit 0
+          fi
+          for id in "${ASSET_IDS[@]}"; do
+            echo "Deleting stale release asset id=$id"
+            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${id}"
+          done
+
       - name: Write release notes
         if: steps.check.outputs.valid == 'true'
         env:
@@ -208,8 +231,15 @@ jobs:
         run: |
           set -euo pipefail
           ZIP_NAME="Vertical-Shorts-Plugin-${VERSION}.zip"
+          PUBLISHED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           {
             echo "## Vertical Shorts Plugin ${VERSION} (Windows)"
+            echo
+            echo "**Last Updated (UTC):** ${PUBLISHED_UTC}"
+            echo
+            echo "**Release run:** [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo
+            echo "**Commit:** \`${{ github.sha }}\`"
             echo
             echo "Open-source OBS plugin. Both downloads are built in GitHub Actions (**Windows Defender** + **ClamAV** scanned before publish)."
             echo
@@ -281,5 +311,7 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
+          # Replace same-named assets; stale differently-named assets were deleted above.
+          overwrite_files: true
           files: release-assets/*
           fail_on_unmatched_files: true

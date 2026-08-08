@@ -175,6 +175,12 @@ void SettingsDialog::BuildAboutTab(QWidget *tab)
 	vf.setBold(true);
 	version->setFont(vf);
 	lay->addWidget(version);
+
+	auto *built = new QLabel(tab);
+	built->setText(QStringLiteral("Built: %1 UTC").arg(QString::fromUtf8(PLUGIN_BUILD_TIMESTAMP)));
+	built->setWordWrap(true);
+	lay->addWidget(built);
+
 	auto *desc = new QLabel(QString::fromUtf8(obs_module_text("AboutHelp")), tab);
 	desc->setWordWrap(true);
 	lay->addWidget(desc);

@@ -1,6 +1,6 @@
 # Security, Antivirus, and Release Audit — Vertical Shorts Plugin
 
-**Audit date:** 2026-08-04 (production release pass)  
+**Audit date:** 2026-08-08 (production release metadata refresh; product version remains 1.0.5)  
 **Branch:** `cursor/production-release-1-0-5-11e0`  
 **Plugin version:** 1.0.5  
 **Official tag:** `v1.0.5`

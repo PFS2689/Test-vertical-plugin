@@ -1,6 +1,6 @@
 # Brand Assets & Trademark Notice — Vertical Shorts Plugin
 
-**Date obtained:** 2026-08-04 (updated for polished selector)  
+**Date obtained:** 2026-08-04 (updated for polished selector; release metadata refreshed 2026-08-08)  
 **Plugin version:** 1.0.5
 
 ## Trademark disclaimer

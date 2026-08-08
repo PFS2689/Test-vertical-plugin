@@ -104,6 +104,7 @@ function New-InstallerStaging {
     $appId = [string]$buildSpec.uuids.windowsApp
     $displayName = if ($buildSpec.displayName) { [string]$buildSpec.displayName } else { 'Vertical Shorts Plugin' }
     $ver = [string]$buildSpec.version
+    $packageStamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     $metaPath = Join-Path $dstPlugin 'install-meta.ini'
     @"
 [Install]
@@ -111,10 +112,11 @@ DisplayName=$displayName
 DisplayVersion=$ver
 AppId={$appId}
 InstallDir=%ProgramData%\obs-studio\plugins\obs-shorts-vertical
+PackageTimestampUtc=$packageStamp
 ConfigLocation=OBS scene collection key obs-shorts-vertical + Windows Credential Manager
 Notes=Binaries only under InstallDir. User config is never stored in overwritten plugin files.
 "@ | Set-Content -Path $metaPath -Encoding UTF8
-    Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver)"
+    Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver, PackageTimestampUtc=$packageStamp)"
 
     return $dstPlugin
 }

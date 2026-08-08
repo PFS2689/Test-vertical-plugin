@@ -29,6 +29,8 @@ extern "C" {
 
 extern const char *PLUGIN_NAME;
 extern const char *PLUGIN_VERSION;
+/* UTC ISO-8601 configure/build stamp (not the product version). */
+extern const char *PLUGIN_BUILD_TIMESTAMP;
 
 void obs_log(int log_level, const char *format, ...);
 extern void blogva(int log_level, const char *format, va_list args);
