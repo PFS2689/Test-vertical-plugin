@@ -272,7 +272,14 @@ jobs:
 
           foreach ($p in @($setup, $zip, $dll)) {
             Write-Host "Defender scan: $p"
-            $proc = Start-Process -FilePath $mp -ArgumentList @('-Scan','-ScanType','3','-File', $p) -Wait -PassThru -NoNewWindow
+            # MpCmdRun rejects some spaced paths (hr=0x80070667). Scan a no-space temp copy.
+            $scanTarget = $p
+            if ($p -match '\s') {
+              $scanTarget = Join-Path $env:TEMP ("vsp-defender-scan" + [IO.Path]::GetExtension($p))
+              Copy-Item -Force $p $scanTarget
+              Write-Host "Defender scan via temp copy: $scanTarget"
+            }
+            $proc = Start-Process -FilePath $mp -ArgumentList @('-Scan','-ScanType','3','-File', $scanTarget) -Wait -PassThru -NoNewWindow
             if ($proc.ExitCode -eq 2) { throw "Windows Defender reported a threat in $p" }
             if ($proc.ExitCode -ne 0) { throw "Windows Defender scan failed for $p (exit $($proc.ExitCode))" }
             Write-Host "Defender CLEAN: $p"
