@@ -136,7 +136,8 @@ void OBSQTDisplay::CreateDisplay(bool force)
 	gs_init_data info = {};
 	info.cx = size.width();
 	info.cy = size.height();
-	info.format = GS_BGRA;
+	/* Match OBS frontend qt-display (GS_RGBA) for reliable dock previews. */
+	info.format = GS_RGBA;
 	info.zsformat = GS_ZS_NONE;
 
 	if (!QTToGSWindow(windowHandle(), info.window))

@@ -207,6 +207,8 @@ private:
 	void ApplyVerticalFitMode(obs_sceneitem_t *item, VerticalFitMode mode, bool persist = true);
 	void ReapplyStoredFitModes();
 	void ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft);
+	void ValidateItemTransform(obs_sceneitem_t *item);
+	void EnsurePreviewSceneShowing(bool enable);
 	static void StoreFitMode(obs_sceneitem_t *item, VerticalFitMode mode);
 	static void StoreFillPosition(obs_sceneitem_t *item, VerticalFillPosition pos);
 	static VerticalFitMode LoadFitMode(obs_sceneitem_t *item, VerticalFitMode fallback = VerticalFitMode::Fill);
@@ -324,6 +326,10 @@ private:
 	gs_vertbuffer_t *box = nullptr; /* dark preview backdrop (OBS-style) */
 	uint64_t drawCallbackCount = 0;
 	uint64_t lastPipelineLogNs = 0;
+	/* Extra show_ref on the active vertical scene while the dock preview is live
+	 * (OBS secondary-display pattern). Paired with EnsurePreviewSceneShowing. */
+	OBSSource previewShowingSource;
+	bool previewShowingHeld = false;
 
 	obs_hotkey_id hkShortClip = OBS_INVALID_HOTKEY_ID;
 	obs_hotkey_id hkLongClip = OBS_INVALID_HOTKEY_ID;
