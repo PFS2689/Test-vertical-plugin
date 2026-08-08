@@ -100,9 +100,6 @@ Type: files; Name: "{app}\install-meta.ini"
 const
   OBS_WINDOW_CLASS = 'OBSWindowClass';
   WM_CLOSE = $0010;
-  { Custom modal results — must not collide with mrCancel (2). }
-  MR_UPGRADE = 100;
-  MR_CLOSE_OBS = 101;
 
 var
   GIsUpgrade: Boolean;
@@ -243,92 +240,43 @@ begin
   Result := not IsOBSRunning;
 end;
 
-function ShowTwoButtonDialog(const Title, Body, PrimaryCaption: String; PrimaryResult: Integer): Integer;
-var
-  Form: TSetupForm;
-  Info: TNewStaticText;
-  PrimaryBtn, CancelBtn: TNewButton;
-  ButtonTop, ButtonWidth, Gap: Integer;
-begin
-  Form := CreateCustomForm;
-  try
-    Form.Caption := Title;
-    Form.ClientWidth := ScaleX(500);
-    Form.ClientHeight := ScaleY(230);
-    Form.Position := poScreenCenter;
-    Form.BorderStyle := bsDialog;
-
-    Info := TNewStaticText.Create(Form);
-    Info.Parent := Form;
-    Info.Left := ScaleX(20);
-    Info.Top := ScaleY(20);
-    Info.Width := Form.ClientWidth - ScaleX(40);
-    Info.Height := ScaleY(140);
-    Info.AutoSize := False;
-    Info.WordWrap := True;
-    Info.Caption := Body;
-
-    ButtonWidth := ScaleX(180);
-    Gap := ScaleX(12);
-    ButtonTop := Form.ClientHeight - ScaleY(52);
-
-    CancelBtn := TNewButton.Create(Form);
-    CancelBtn.Parent := Form;
-    CancelBtn.Caption := 'Cancel';
-    CancelBtn.ModalResult := mrCancel;
-    CancelBtn.Cancel := True;
-    CancelBtn.Width := ButtonWidth;
-    CancelBtn.Height := ScaleY(28);
-    CancelBtn.Left := Form.ClientWidth - ScaleX(20) - ButtonWidth;
-    CancelBtn.Top := ButtonTop;
-
-    PrimaryBtn := TNewButton.Create(Form);
-    PrimaryBtn.Parent := Form;
-    PrimaryBtn.Caption := PrimaryCaption;
-    PrimaryBtn.ModalResult := PrimaryResult;
-    PrimaryBtn.Default := True;
-    PrimaryBtn.Width := ButtonWidth;
-    PrimaryBtn.Height := ScaleY(28);
-    PrimaryBtn.Left := CancelBtn.Left - Gap - ButtonWidth;
-    PrimaryBtn.Top := ButtonTop;
-
-    Result := Form.ShowModal;
-  finally
-    Form.Free;
-  end;
-end;
-
 function ConfirmUpgrade(const PrevVer, NewVer: String): Boolean;
 var
+  Labels: TArrayOfString;
   Body: String;
-  Answer: Integer;
 begin
   Body :=
     'Vertical Shorts Plugin ' + PrevVer + ' is currently installed.'#13#10#13#10 +
     'Setup will upgrade it to Vertical Shorts Plugin ' + NewVer + '.'#13#10#13#10 +
     'Your scenes, sources, destinations, credentials, schedules, and settings will be preserved.'#13#10 +
     'You do not need to uninstall first.';
-  Answer := ShowTwoButtonDialog('{#MyAppName} Setup', Body, 'Upgrade', MR_UPGRADE);
-  Result := (Answer = MR_UPGRADE);
+  SetArrayLength(Labels, 2);
+  Labels[0] := 'Upgrade';
+  Labels[1] := 'Cancel';
+  Result := TaskDialogMsgBox('Upgrade Vertical Shorts Plugin', Body, tdInformation,
+    MB_OKCANCEL, Labels, 0) = IDOK;
 end;
 
 function EnsureOBSClosed: Boolean;
 var
+  Labels: TArrayOfString;
   Answer: Integer;
 begin
   Result := True;
   if not IsOBSRunning then
     exit;
 
-  Answer := ShowTwoButtonDialog(
-    '{#MyAppName} Setup',
+  SetArrayLength(Labels, 2);
+  Labels[0] := 'Close OBS and Continue';
+  Labels[1] := 'Cancel';
+  Answer := TaskDialogMsgBox(
+    'OBS Studio must be closed',
     'OBS Studio must be closed before Vertical Shorts Plugin can be updated.'#13#10#13#10 +
     'Setup will ask OBS to quit normally. The plugin DLL cannot be replaced while OBS has it loaded.'#13#10#13#10 +
     'OBS will not be force-killed without your confirmation.',
-    'Close OBS and Continue',
-    MR_CLOSE_OBS);
+    tdWarning, MB_OKCANCEL, Labels, 0);
 
-  if Answer <> MR_CLOSE_OBS then begin
+  if Answer <> IDOK then begin
     Result := False;
     exit;
   end;
