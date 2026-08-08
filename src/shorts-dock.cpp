@@ -1529,9 +1529,7 @@ void ShortsDock::SyncClipPresetControls()
 	}
 	if (longClipBtn) {
 		longClipBtn->setToolTip(Translate("LongClipTip") + QStringLiteral(" — ") +
-					QString::number(longSec / 60) + QStringLiteral("m") +
-					((longSec % 60) ? QStringLiteral("%1s").arg(longSec % 60, 2, 10, QLatin1Char('0'))
-							: QString()));
+					 QString::number(longSec) + QStringLiteral("s"));
 	}
 
 	syncingClipPresets = false;
