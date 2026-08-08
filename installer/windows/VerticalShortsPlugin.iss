@@ -120,7 +120,7 @@ var
   GIsUpgrade: Boolean;
   GPreviousVersion: String;
   GUpgradeBackupDir: String;
-  GObsInstallPath: String; { Detected OBS root; never requires {app} }
+  GObsInstallPath: String; (* Detected OBS root; never requires app constant *)
   GExistingPluginDll: String;
 
 function AddBackslashIfNeeded(const Path: String): String;
@@ -163,7 +163,7 @@ begin
     Result := True;
 end;
 
-{ --- OBS detection (safe before {app} is initialized) --- }
+(* OBS detection — safe before app constant is initialized *)
 
 function DetectObsInstallPath: String;
 var
@@ -206,7 +206,7 @@ begin
   end;
 end;
 
-{ Called by DefaultDirName={code:GetDefaultDirName} — must not use {app}. }
+(* Called by DefaultDirName=code:GetDefaultDirName — must not use app constant. *)
 function GetDefaultDirName(Param: String): String;
 begin
   Result := DetectObsInstallPath;
@@ -214,7 +214,7 @@ begin
     Result := ExpandConstant('{autopf}\obs-studio');
 end;
 
-{ --- Upgrade detection without {app} --- }
+(* Upgrade detection without app constant *)
 
 function GetInstalledVersionFromRegistry: String;
 var
@@ -330,7 +330,7 @@ end;
 
 function IsOBSRunning: Boolean;
 begin
-  { Window/mutex check only — no {app} paths. }
+  (* Window/mutex check only — no app-constant paths. *)
   Result := (FindWindowByClassName(OBS_WINDOW_CLASS) <> 0) or
             CheckForMutexes('OBSStudioRunningMutex') or
             CheckForMutexes('OBS32RunningMutex');
@@ -418,7 +418,7 @@ begin
     exit;
   end;
 
-  { {app} is initialized by PrepareToInstall time. }
+  (* app constant is initialized by PrepareToInstall time. *)
   MetaPath := ExpandConstant('{app}\data\obs-plugins\obs-shorts-vertical\install-meta.ini');
   CopyFileIfExists(MetaPath, Dest + '\install-meta.ini');
   if (GExistingPluginDll <> '') and FileExists(GExistingPluginDll) then
@@ -450,7 +450,7 @@ var
   P: String;
 begin
   Result := True;
-  { New layout leftovers under OBS root ({app} valid in PrepareToInstall). }
+  (* New layout leftovers under OBS root (app constant valid in PrepareToInstall). *)
   P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.pdb');
   if FileExists(P) then
     DeleteFile(P);
@@ -472,7 +472,7 @@ var
 begin
   Result := True;
 
-  { Detect OBS without touching {app}. }
+  (* Detect OBS without touching app constant. *)
   GObsInstallPath := DetectObsInstallPath;
   GExistingPluginDll := FindExistingPluginDll;
   GUpgradeBackupDir := '';
