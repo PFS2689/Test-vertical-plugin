@@ -67,8 +67,6 @@ private:
 	void BuildAutomationTab(QWidget *tab);
 	void BuildStreamingTab(QWidget *tab);
 	void BuildAudioTab(QWidget *tab);
-	void BuildHotkeysTab(QWidget *tab);
-	void BuildAdvancedTab(QWidget *tab);
 	void BuildAboutTab(QWidget *tab);
 	void OnApply();
 	int AddCategory(const char *localeKey, const char *fallback, QWidget *page);
@@ -150,11 +148,12 @@ private:
 	QDateEdit *schedEndDate = nullptr;
 	QTimeEdit *schedEndTime = nullptr;
 	QComboBox *schedRepeat = nullptr;
+	QCheckBox *weekdayChecks[7] = {};
 	QLabel *tzLabel = nullptr;
 	QLabel *autoStatusLabel = nullptr;
 	QCheckBox *confirmManualStop = nullptr;
 
-	/* OBS-style pages: content stack (left) + category list (right) */
+	/* Category list (left) + content pages (right) */
 	QStackedWidget *pages = nullptr;
 	QListWidget *categories = nullptr;
 	int streamingTabIndex = -1;

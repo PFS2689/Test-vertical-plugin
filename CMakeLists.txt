@@ -50,6 +50,8 @@ target_sources(
     src/plugin-main.cpp
     src/shorts-dock.cpp
     src/shorts-dock.hpp
+    src/vertical-production-dock.cpp
+    src/vertical-production-dock.hpp
     src/vertical-scenes-dock.cpp
     src/vertical-scenes-dock.hpp
     src/vertical-sources-dock.cpp

@@ -4,7 +4,8 @@
 #include <QWidget>
 #include <obs.hpp>
 
-#define GREY_COLOR_BACKGROUND 0xFF4C4C4C
+/* OBS-style dark preview clear color (ABGR). Never white. */
+#define GREY_COLOR_BACKGROUND 0xFF282828
 
 class OBSQTDisplay : public QWidget {
 	Q_OBJECT

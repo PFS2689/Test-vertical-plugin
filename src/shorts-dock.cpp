@@ -8,6 +8,7 @@
 
 #include <QAbstractItemView>
 #include <QCheckBox>
+#include <QColor>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDoubleSpinBox>
@@ -31,6 +32,8 @@
 #include <QVariant>
 #include <QVBoxLayout>
 #include <QtMath>
+
+#include <graphics/vec4.h>
 
 #include <algorithm>
 #include <cmath>
@@ -399,20 +402,47 @@ ShortsDock::~ShortsDock()
 
 void ShortsDock::BuildUI()
 {
+	/* Dark dock chrome — never inherit a white QFrame/QWidget fill behind the preview. */
+	setObjectName(QStringLiteral("ShortsDock"));
+	setStyleSheet(QStringLiteral(
+		"#ShortsDock { background-color: #1f1f1f; }"
+		"#vsControlsBar { background-color: #1f1f1f; }"
+		"#vsControlsBar QPushButton {"
+		"  font-size: 20px;"
+		"  min-width: 40px;"
+		"  max-width: 48px;"
+		"  min-height: 34px;"
+		"  padding: 2px 4px;"
+		"  border: 1px solid #3a3a3a;"
+		"  border-radius: 4px;"
+		"  background-color: #2a2a2a;"
+		"  color: #f0f0f0;"
+		"}"
+		"#vsControlsBar QPushButton:checked {"
+		"  background-color: #3d5a3d;"
+		"  border-color: #6aae6a;"
+		"}"
+		"#vsControlsBar QPushButton:pressed { background-color: #333333; }"));
+
 	auto *root = new QVBoxLayout(this);
-	root->setContentsMargins(4, 4, 4, 4);
-	root->setSpacing(4);
+	root->setContentsMargins(2, 2, 2, 2);
+	root->setSpacing(2);
 
 	preview = new OBSQTDisplay(this);
 	preview->setMinimumSize(120, 120);
 	preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	preview->setAutoFillBackground(false);
+	/* OBS-style dark preview clear color (never white). */
+	preview->SetDisplayBackgroundColor(QColor(0x28, 0x28, 0x28));
 	previewEventFilter = BuildEventFilter();
 	preview->installEventFilter(previewEventFilter.get());
 
 	auto addDrawCallback = [this]() {
 		obs_display_t *display = preview->GetDisplay();
-		if (display)
+		if (display) {
+			obs_display_set_background_color(display, 0xFF282828);
 			obs_display_add_draw_callback(display, DrawCallback, this);
+		}
 	};
 	connect(preview, &OBSQTDisplay::DisplayCreated, addDrawCallback);
 	root->addWidget(preview, 1);
@@ -420,33 +450,34 @@ void ShortsDock::BuildUI()
 	controlsBar = new QWidget(this);
 	controlsBar->setObjectName(QStringLiteral("vsControlsBar"));
 	auto *bar = new QHBoxLayout(controlsBar);
-	bar->setContentsMargins(0, 0, 0, 0);
-	bar->setSpacing(6);
+	bar->setContentsMargins(2, 2, 2, 2);
+	bar->setSpacing(4);
 
-	goLiveBtn = new QPushButton(QString::fromUtf8("\U0001F7E2 ") + Translate("GoLive"), controlsBar);
+	/* Emoji-only controls — tooltips carry the accessible names. */
+	goLiveBtn = new QPushButton(QString::fromUtf8("\U0001F7E2"), controlsBar);
 	goLiveBtn->setCheckable(true);
-	goLiveBtn->setToolTip(Translate("GoLiveTip"));
+	goLiveBtn->setToolTip(Translate("GoLive"));
 	goLiveBtn->setAccessibleName(Translate("GoLive"));
 	connect(goLiveBtn, &QPushButton::clicked, this, &ShortsDock::OnGoLive);
 
-	recordBtn = new QPushButton(QString::fromUtf8("\u23FA\uFE0F ") + Translate("Record"), controlsBar);
+	recordBtn = new QPushButton(QString::fromUtf8("\u23FA\uFE0F"), controlsBar);
 	recordBtn->setCheckable(true);
-	recordBtn->setToolTip(Translate("RecordTip"));
+	recordBtn->setToolTip(Translate("Record"));
 	recordBtn->setAccessibleName(Translate("Record"));
 	connect(recordBtn, &QPushButton::clicked, this, &ShortsDock::OnRecord);
 
-	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8 ") + Translate("ShortClip"), controlsBar);
-	shortClipBtn->setToolTip(Translate("ShortClipTip"));
+	shortClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F8"), controlsBar);
+	shortClipBtn->setToolTip(Translate("ShortClip"));
 	shortClipBtn->setAccessibleName(Translate("ShortClip"));
 	connect(shortClipBtn, &QPushButton::clicked, this, &ShortsDock::OnShortClip);
 
-	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7 ") + Translate("LongClip"), controlsBar);
-	longClipBtn->setToolTip(Translate("LongClipTip"));
+	longClipBtn = new QPushButton(QString::fromUtf8("\U0001F4F7"), controlsBar);
+	longClipBtn->setToolTip(Translate("LongClip"));
 	longClipBtn->setAccessibleName(Translate("LongClip"));
 	connect(longClipBtn, &QPushButton::clicked, this, &ShortsDock::OnLongClip);
 
-	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F ") + Translate("Settings"), controlsBar);
-	settingsBtn->setToolTip(Translate("SettingsTip"));
+	settingsBtn = new QPushButton(QString::fromUtf8("\u2699\uFE0F"), controlsBar);
+	settingsBtn->setToolTip(Translate("Settings"));
 	settingsBtn->setAccessibleName(Translate("Settings"));
 	connect(settingsBtn, &QPushButton::clicked, this, &ShortsDock::OnSettings);
 
@@ -456,7 +487,7 @@ void ShortsDock::BuildUI()
 	bar->addWidget(longClipBtn);
 	bar->addWidget(settingsBtn);
 	bar->addStretch(1);
-	root->addWidget(controlsBar);
+	root->addWidget(controlsBar, 0);
 }
 
 void ShortsDock::ApplyCanvasFromSettings()
@@ -538,17 +569,20 @@ void ShortsDock::CreateView()
 	ovi.output_width = verticalWidth;
 	ovi.output_height = verticalHeight;
 
-	/* PROGRAM = ACTIVATE | MIX_AUDIO | SCENE_REF — ACTIVATE uses MAIN_VIEW so
-	 * Video Capture Devices and other inputs receive activate_refs when visible. */
+	/* ACTIVATE | SCENE_REF — MAIN_VIEW activation for capture devices.
+	 * MIX_AUDIO intentionally omitted so vertical canvas audio is not mixed
+	 * into the main OBS program audio output. */
+	const uint32_t verticalCanvasFlags = ACTIVATE | SCENE_REF;
 	if (!canvas) {
-		canvas = obs_canvas_create_private("Vertical Shorts", &ovi, PROGRAM);
+		canvas = obs_canvas_create_private("Vertical Shorts", &ovi, verticalCanvasFlags);
 		if (!canvas) {
 			blog(LOG_ERROR, "[obs-shorts-vertical] obs_canvas_create_private failed");
 			video = nullptr;
 			return;
 		}
-		blog(LOG_INFO, "[obs-shorts-vertical] Vertical PROGRAM canvas created %ux%u", verticalWidth,
-		     verticalHeight);
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] Vertical canvas created %ux%u (ACTIVATE|SCENE_REF, no MIX_AUDIO)",
+		     verticalWidth, verticalHeight);
 	} else {
 		struct obs_video_info cur = {};
 		bool needReset = !obs_canvas_has_video(canvas);
@@ -1511,9 +1545,8 @@ void ShortsDock::OnStreamingChanged(bool active)
 	if (!goLiveBtn)
 		return;
 	goLiveBtn->setChecked(active);
-	goLiveBtn->setText(QString::fromUtf8(active ? "\U0001F534 " : "\U0001F7E2 ") +
-			   QString::fromUtf8(Translate(active ? "StopGoLive" : "GoLive")));
-	goLiveBtn->setToolTip(Translate(active ? "StopGoLiveTip" : "GoLiveTip"));
+	goLiveBtn->setText(QString::fromUtf8(active ? "\U0001F534" : "\U0001F7E2"));
+	goLiveBtn->setToolTip(Translate(active ? "StopGoLive" : "GoLive"));
 	if (automation) {
 		if (active)
 			automation->OnVerticalLiveStarted();
@@ -1527,9 +1560,8 @@ void ShortsDock::OnRecordingChanged(bool active)
 	if (!recordBtn)
 		return;
 	recordBtn->setChecked(active);
-	recordBtn->setText(QString::fromUtf8("\u23FA\uFE0F ") +
-			   QString::fromUtf8(Translate(active ? "StopRecord" : "Record")));
-	recordBtn->setToolTip(Translate(active ? "StopRecordTip" : "RecordTip"));
+	recordBtn->setText(QString::fromUtf8("\u23FA\uFE0F"));
+	recordBtn->setToolTip(Translate(active ? "StopRecord" : "Record"));
 	if (!active)
 		recordingStartedManually = false;
 	if (automation) {
@@ -1752,26 +1784,58 @@ void ShortsDock::DrawCallback(void *data, uint32_t cx, uint32_t cy)
 
 void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 {
-	if (!scene && !canvas)
-		return;
-
-	const uint32_t canvasW = verticalWidth;
-	const uint32_t canvasH = verticalHeight;
+	const uint32_t canvasW = verticalWidth > 0 ? verticalWidth : 1080;
+	const uint32_t canvasH = verticalHeight > 0 ? verticalHeight : 1920;
 	UpdatePreviewScale((int)cx, (int)cy);
 
 	gs_viewport_push();
 	gs_projection_push();
 
-	gs_ortho(0.0f, (float)canvasW, 0.0f, (float)canvasH, -100.0f, 100.0f);
-	gs_set_viewport(previewX, previewY, (int)(previewScale * canvasW), (int)(previewScale * canvasH));
+	/* Ensure the display clear stays dark even if a theme paints white behind us. */
+	vec4 clearColor;
+	vec4_set(&clearColor, 0.155f, 0.155f, 0.155f, 1.0f);
+	gs_clear(GS_CLEAR_COLOR, &clearColor, 0.0f, 0);
 
-	/* Render the PROGRAM canvas channel (scene or in-flight transition). */
-	if (canvas)
+	const int vpX = previewX;
+	const int vpY = previewY;
+	const int vpW = std::max(1, (int)(previewScale * canvasW));
+	const int vpH = std::max(1, (int)(previewScale * canvasH));
+	gs_ortho(0.0f, (float)canvasW, 0.0f, (float)canvasH, -100.0f, 100.0f);
+	gs_set_viewport(vpX, vpY, vpW, vpH);
+
+	/* Vertical program plane — dark OBS-style fill before sources. */
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *colorParam = gs_effect_get_param_by_name(solid, "color");
+	vec4 box;
+	vec4_set(&box, 0.12f, 0.12f, 0.12f, 1.0f);
+	gs_effect_set_vec4(colorParam, &box);
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_draw_sprite(nullptr, 0, canvasW, canvasH);
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+
+	if (canvas) {
+		obs_source_t *channel0 = obs_canvas_get_channel(canvas, 0);
+		if (!channel0) {
+			static bool loggedEmpty = false;
+			if (!loggedEmpty) {
+				blog(LOG_WARNING,
+				     "[obs-shorts-vertical] DrawPreview: canvas channel 0 empty "
+				     "(no active vertical scene assigned)");
+				loggedEmpty = true;
+			}
+		} else {
+			obs_source_release(channel0);
+		}
 		obs_canvas_render(canvas);
-	else if (scene) {
+	} else if (scene) {
 		obs_source_t *source = obs_scene_get_source(scene);
 		if (source)
 			obs_source_video_render(source);
+		else
+			blog(LOG_WARNING, "[obs-shorts-vertical] DrawPreview: scene has no source");
 	}
 
 	DrawSceneEditing();

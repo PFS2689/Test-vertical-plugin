@@ -80,7 +80,7 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 	root->setContentsMargins(8, 8, 8, 8);
 	root->setSpacing(8);
 
-	/* OBS Settings layout: pages on the left, category list on the right. */
+	/* Category list on the left, pages on the right (opposite of previous layout). */
 	auto *body = new QHBoxLayout();
 	body->setSpacing(8);
 
@@ -118,20 +118,12 @@ SettingsDialog::SettingsDialog(vsp::PluginSettings s, VerticalOutputs *outs, con
 	BuildAudioTab(audio);
 	AddCategory("TabAudio", "Audio", audio);
 
-	auto *hotkeys = new QWidget();
-	BuildHotkeysTab(hotkeys);
-	AddCategory("TabHotkeys", "Hotkeys", hotkeys);
-
-	auto *advanced = new QWidget();
-	BuildAdvancedTab(advanced);
-	AddCategory("TabAdvanced", "Advanced", advanced);
-
 	auto *about = new QWidget();
 	BuildAboutTab(about);
 	AddCategory("TabAbout", "About", about);
 
-	body->addWidget(pages, 1);
 	body->addWidget(categories, 0);
+	body->addWidget(pages, 1);
 	root->addLayout(body, 1);
 
 	if (categories->count() > 0)
@@ -168,15 +160,6 @@ void SettingsDialog::BuildAudioTab(QWidget *tab)
 {
 	auto *lay = new QVBoxLayout(tab);
 	auto *help = new QLabel(QString::fromUtf8(obs_module_text("AudioHelp")), tab);
-	help->setWordWrap(true);
-	lay->addWidget(help);
-	lay->addStretch(1);
-}
-
-void SettingsDialog::BuildHotkeysTab(QWidget *tab)
-{
-	auto *lay = new QVBoxLayout(tab);
-	auto *help = new QLabel(QString::fromUtf8(obs_module_text("HotkeysHelp")), tab);
 	help->setWordWrap(true);
 	lay->addWidget(help);
 	lay->addStretch(1);
@@ -455,12 +438,34 @@ void SettingsDialog::BuildAutomationTab(QWidget *tab)
 	schedRepeat->addItem(QString::fromUtf8(obs_module_text("RepeatOnce")), (int)vsp::ScheduleRepeat::Once);
 	schedRepeat->addItem(QString::fromUtf8(obs_module_text("RepeatDaily")), (int)vsp::ScheduleRepeat::Daily);
 	schedRepeat->addItem(QString::fromUtf8(obs_module_text("RepeatWeekly")), (int)vsp::ScheduleRepeat::Weekly);
-	schedRepeat->addItem(QString::fromUtf8(obs_module_text("RepeatWeekdays")), (int)vsp::ScheduleRepeat::Weekdays);
+	schedRepeat->addItem(QString::fromUtf8(obs_module_text("RepeatByDay")), (int)vsp::ScheduleRepeat::Weekdays);
 	schedForm->addRow(QString::fromUtf8(obs_module_text("ScheduleStartDate")), schedStartDate);
 	schedForm->addRow(QString::fromUtf8(obs_module_text("ScheduleStartTime")), schedStartTime);
 	schedForm->addRow(QString::fromUtf8(obs_module_text("ScheduleEndDate")), schedEndDate);
 	schedForm->addRow(QString::fromUtf8(obs_module_text("ScheduleEndTime")), schedEndTime);
 	schedForm->addRow(QString::fromUtf8(obs_module_text("ScheduleRepeat")), schedRepeat);
+
+	auto *daysRow = new QHBoxLayout();
+	static const char *kDayKeys[] = {"DayMon", "DayTue", "DayWed", "DayThu", "DayFri", "DaySat", "DaySun"};
+	for (int d = 0; d < 7; ++d) {
+		weekdayChecks[d] = new QCheckBox(QString::fromUtf8(obs_module_text(kDayKeys[d])), schedBox);
+		daysRow->addWidget(weekdayChecks[d]);
+	}
+	daysRow->addStretch(1);
+	schedForm->addRow(QString::fromUtf8(obs_module_text("RepeatDays")), daysRow);
+
+	auto updateDaysEnabled = [this]() {
+		const bool byDay = schedRepeat &&
+				   schedRepeat->currentData().toInt() == (int)vsp::ScheduleRepeat::Weekdays;
+		for (QCheckBox *cb : weekdayChecks) {
+			if (cb)
+				cb->setEnabled(byDay);
+		}
+	};
+	connect(schedRepeat, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+		[updateDaysEnabled](int) { updateDaysEnabled(); });
+	updateDaysEnabled();
+
 	auto *schedNote = new QLabel(QString::fromUtf8(obs_module_text("ScheduleNote")), schedBox);
 	schedNote->setWordWrap(true);
 	schedForm->addRow(schedNote);
@@ -653,22 +658,6 @@ void SettingsDialog::BuildStreamingTab(QWidget *tab)
 	lay->addStretch(1);
 }
 
-void SettingsDialog::BuildAdvancedTab(QWidget *tab)
-{
-	auto *lay = new QVBoxLayout(tab);
-	auto *version = new QLabel(QString::fromUtf8(obs_module_text("PluginVersionLabel")), tab);
-	if (version->text().isEmpty() || version->text() == QStringLiteral("PluginVersionLabel"))
-		version->setText(QStringLiteral("Vertical Shorts Plugin %1").arg(QString::fromUtf8(PLUGIN_VERSION)));
-	QFont vf = version->font();
-	vf.setBold(true);
-	version->setFont(vf);
-	lay->addWidget(version);
-	auto *label = new QLabel(QString::fromUtf8(obs_module_text("AdvancedHelp")), tab);
-	label->setWordWrap(true);
-	lay->addWidget(label);
-	lay->addStretch(1);
-}
-
 void SettingsDialog::SyncFieldsFromSettings()
 {
 	for (int i = 0; i < presetCombo->count(); ++i) {
@@ -773,6 +762,10 @@ void SettingsDialog::SyncFieldsFromSettings()
 			schedRepeat->setCurrentIndex(i);
 			break;
 		}
+	}
+	for (int d = 0; d < 7; ++d) {
+		if (weekdayChecks[d])
+			weekdayChecks[d]->setChecked((settings.scheduleWeekdaysMask & (1 << d)) != 0);
 	}
 
 	autoStatusLabel->setText(QStringLiteral("Status: %1").arg(
@@ -949,6 +942,17 @@ bool SettingsDialog::ValidateAndCommit(QString *error, QString *warning)
 	settings.scheduleEndDate = schedEndDate->date().toString(QStringLiteral("yyyy-MM-dd"));
 	settings.scheduleEndTime = schedEndTime->time().toString(QStringLiteral("HH:mm"));
 	settings.scheduleRepeat = static_cast<vsp::ScheduleRepeat>(schedRepeat->currentData().toInt());
+	int dayMask = 0;
+	for (int d = 0; d < 7; ++d) {
+		if (weekdayChecks[d] && weekdayChecks[d]->isChecked())
+			dayMask |= (1 << d);
+	}
+	settings.scheduleWeekdaysMask = dayMask;
+	if (settings.scheduleRepeat == vsp::ScheduleRepeat::Weekdays && dayMask == 0) {
+		if (error)
+			*error = QString::fromUtf8(obs_module_text("RepeatDaysRequired"));
+		return false;
+	}
 
 	return true;
 }

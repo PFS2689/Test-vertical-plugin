@@ -28,6 +28,10 @@ Includes:
 - Authenticode signing when CI credentials are configured (Azure Artifact Signing or OV/EV PFX)
 - **Fix:** Video Capture Device sources now render on the Vertical Shorts canvas (OBS 32 PROGRAM canvas with ACTIVATE so cameras receive `activate_refs`; preview uses `obs_canvas_render`)
 - Replaced the former custom MSVC Win32 Setup stub with a standard Inno Setup pipeline (stage Release payload → ISCC)
+- Vertical Shorts dock: dark OBS-style preview (never white), emoji-only controls
+- Combined Vertical Scenes / Sources / Transitions into **Vertical Production** dock
+- Settings: category list on the left; removed Hotkeys and Advanced tabs; repeat-by-day schedule day checkboxes
+- Vertical canvas audio no longer uses `MIX_AUDIO` (independent from main program mix)
 
 ---
 
