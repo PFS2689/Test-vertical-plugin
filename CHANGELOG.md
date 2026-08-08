@@ -30,6 +30,8 @@ Includes:
 - Replaced the former custom MSVC Win32 Setup stub with a standard Inno Setup pipeline (stage Release payload → ISCC)
 - Vertical Shorts dock: dark OBS-style preview (never white), emoji-only controls
 - Combined Vertical Scenes / Sources / Transitions into **Vertical Production** dock
+- Vertical Sources: removed X/Y/W/H/Rot spins and Fit/Stretch/Center/Reset row (transform still via preview context menu)
+- Vertical Shorts dock: short/long clip length presets selectable next to the clip buttons (no Settings visit required)
 - Settings: category list on the left; removed Hotkeys and Advanced tabs; repeat-by-day schedule day checkboxes
 - Vertical canvas audio no longer uses `MIX_AUDIO` (independent from main program mix)
 - **In-place upgrades:** permanent Inno Setup AppId; Setup detects an existing install, offers Upgrade/Cancel, requires OBS closed, backs up lightweight metadata, replaces binaries only, and preserves destinations/credentials/scenes/settings
