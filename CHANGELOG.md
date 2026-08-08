@@ -32,7 +32,8 @@ Includes:
 - Combined Vertical Scenes / Sources / Transitions into **Vertical Production** dock
 - Vertical Sources: removed X/Y/W/H/Rot spins and Fit/Stretch/Center/Reset row (transform still via preview context menu)
 - Vertical Shorts dock: compact centered emoji toolbar; canvas Preset row directly underneath; short/long clip length presets on the Preset row (canvas keeps stretch)
-- **Fix:** Vertical Shorts preview blank when a Video Capture Device (or other source) was listed but not drawn — keep PROGRAM channel 0 bound to the active vertical scene (ACTIVATE/MAIN_VIEW), render the active scene via `obs_source_video_render`, OBS-style dark backdrop, and fit new items with centered `OBS_BOUNDS_SCALE_INNER` (shared existing sources; no second camera open)
+- **Fix:** Vertical Shorts preview blank when a Video Capture Device (or other source) was listed but not drawn — keep PROGRAM channel 0 bound to the active vertical scene (ACTIVATE/MAIN_VIEW), render via `obs_canvas_render`, OBS-style dark backdrop, and fit new items with centered `OBS_BOUNDS_SCALE_INNER` (shared existing sources; no second camera open)
+- **Fix:** Corner/edge resize handles on the vertical preview (bounds-aware stretch, HiDPI mouse mapping, larger hit targets); Add Source defaults to sharing an existing OBS camera so one USB device can be in horizontal and vertical with independent transforms
 - Settings: category list on the left; removed Hotkeys and Advanced tabs; repeat-by-day schedule day checkboxes
 - Vertical canvas audio no longer uses `MIX_AUDIO` (independent from main program mix)
 - **In-place upgrades:** permanent Inno Setup AppId; Setup detects an existing install, offers Upgrade/Cancel, requires OBS closed, backs up lightweight metadata, replaces binaries only, and preserves destinations/credentials/scenes/settings

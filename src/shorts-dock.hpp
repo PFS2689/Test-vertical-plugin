@@ -186,6 +186,8 @@ private:
 	void GetStretchHandleData(const vec2 &pos);
 	void MoveItems(const vec2 &pos);
 	void StretchItem(const vec2 &pos);
+	static vec2 GetItemSize(obs_sceneitem_t *item);
+	vec3 CalculateStretchPos(const vec3 &tl, const vec3 &br) const;
 	void DrawPreview(uint32_t cx, uint32_t cy);
 	void DrawSceneEditing();
 	static bool DrawSelectedItem(obs_scene_t *scene, obs_sceneitem_t *item, void *param);

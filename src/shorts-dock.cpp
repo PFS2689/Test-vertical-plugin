@@ -33,6 +33,7 @@
 #include <QVBoxLayout>
 #include <QtMath>
 
+#include <graphics/vec3.h>
 #include <graphics/vec4.h>
 
 #include <algorithm>
@@ -446,6 +447,7 @@ void ShortsDock::BuildUI()
 	preview->setMinimumSize(120, 120);
 	preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	preview->setAutoFillBackground(false);
+	preview->setMouseTracking(true);
 	/* OBS-style dark preview clear color (never white). */
 	preview->SetDisplayBackgroundColor(QColor(0x28, 0x28, 0x28));
 	previewEventFilter = BuildEventFilter();
@@ -457,6 +459,9 @@ void ShortsDock::BuildUI()
 			obs_display_set_background_color(display, 0xFF282828);
 			obs_display_add_draw_callback(display, DrawCallback, this);
 		}
+		/* Display is ready — ensure PROGRAM channel is bound so cameras activate. */
+		EnsureCanvasProgramChannel(true);
+		LogRenderPipeline("DisplayCreated");
 	};
 	connect(preview, &OBSQTDisplay::DisplayCreated, addDrawCallback);
 	root->addWidget(preview, 1); /* stretch: canvas takes all extra space */
@@ -1102,8 +1107,9 @@ void ShortsDock::RequestAddSource()
 			return;
 	}
 
-	/* Prefer sharing an existing source (avoids opening the same USB camera twice).
-	 * Also allow creating a new Video Capture Device when none exist yet. */
+	/* Prefer sharing an existing OBS source so the same USB camera can appear in
+	 * main (horizontal) AND Vertical Shorts with independent scene-item transforms.
+	 * Creating a second Video Capture Device usually fails on Windows (exclusive). */
 	std::vector<std::string> names;
 	std::vector<OBSSource> sources;
 	struct EnumData {
@@ -1127,13 +1133,15 @@ void ShortsDock::RequestAddSource()
 
 	QStringList items;
 	const QString createVcd = Translate("CreateVideoCaptureDevice");
-	items << createVcd;
+	/* Existing sources first — default selection is the first existing source. */
 	for (const auto &n : names)
 		items << QString::fromUtf8(n.c_str());
+	items << createVcd;
+	const int defaultIndex = names.empty() ? 0 : 0;
 
 	bool ok = false;
-	QString chosen =
-		QInputDialog::getItem(this, Translate("AddSource"), Translate("SelectSource"), items, 0, false, &ok);
+	QString chosen = QInputDialog::getItem(this, Translate("AddSource"), Translate("SelectSource"), items,
+					       defaultIndex, false, &ok);
 	if (!ok || chosen.isEmpty())
 		return;
 
@@ -1163,7 +1171,8 @@ void ShortsDock::RequestAddSource()
 			existing = obs_get_source_by_name(text.toUtf8().constData());
 		}
 
-		/* Single public source instance — never create a second capture for the same device here. */
+		/* New public source — do not use this path if the camera is already
+		 * open in main OBS; prefer selecting the existing source above. */
 		obs_source_t *created = obs_source_create(id, text.toUtf8().constData(), nullptr, nullptr);
 		if (!created) {
 			QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
@@ -1172,6 +1181,11 @@ void ShortsDock::RequestAddSource()
 		AddSourceToActiveScene(created, true);
 		if (obs_source_configurable(created))
 			obs_frontend_open_source_properties(created);
+		const uint32_t sw = obs_source_get_width(created);
+		const uint32_t sh = obs_source_get_height(created);
+		if (sw == 0 || sh == 0) {
+			QMessageBox::warning(this, Translate("AddSource"), Translate("CameraDeviceInUseHint"));
+		}
 		obs_source_release(created);
 		EmitSourceUiChanged();
 		return;
@@ -1180,6 +1194,7 @@ void ShortsDock::RequestAddSource()
 	for (size_t i = 0; i < names.size(); i++) {
 		if (chosen != QString::fromUtf8(names[i].c_str()))
 			continue;
+		/* Shared source reference: same camera hardware, independent vertical transform. */
 		AddSourceToActiveScene(sources[i], true);
 		break;
 	}
@@ -1236,13 +1251,16 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 		return nullptr;
 
 	/* Shared reference: obs_scene_add references the existing OBS source.
-	 * Never create a second Video Capture Device instance here. */
+	 * Device settings stay on that source; vertical gets its own scene item
+	 * (independent pos/scale/crop/bounds) so the camera can be in both
+	 * horizontal and vertical production without opening the device twice. */
 	obs_sceneitem_t *item = obs_scene_add(scene, source);
 	if (!item) {
 		blog(LOG_WARNING, "[obs-shorts-vertical] obs_scene_add failed for '%s'", obs_source_get_name(source));
 		return nullptr;
 	}
 
+	obs_source_set_enabled(source, true);
 	obs_sceneitem_set_visible(item, true);
 	obs_scene_enum_items(scene, ClearSelection, nullptr);
 	obs_sceneitem_select(item, true);
@@ -1253,7 +1271,7 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 		if (sw > 0 && sh > 0)
 			FitSceneItemToCanvas(item);
 		else
-			ScheduleDeferredFit(item, 25); /* ~5s for devices that start late */
+			ScheduleDeferredFit(item, 40); /* ~8s for devices that start late */
 	}
 
 	/* PROGRAM channel must reference the active vertical scene so ACTIVATE
@@ -1379,15 +1397,17 @@ void ShortsDock::RequestStretchToScreen()
 	if (selected.empty())
 		return;
 	obs_sceneitem_t *item = selected.front();
-	obs_source_t *source = obs_sceneitem_get_source(item);
-	uint32_t sw = std::max(1u, obs_source_get_width(source));
-	uint32_t sh = std::max(1u, obs_source_get_height(source));
-	vec2 s;
-	vec2_set(&s, float(verticalWidth) / float(sw), float(verticalHeight) / float(sh));
-	obs_sceneitem_set_scale(item, &s);
-	vec2 pos;
-	vec2_set(&pos, 0.0f, 0.0f);
-	obs_sceneitem_set_pos(item, &pos);
+	obs_transform_info info{};
+	obs_sceneitem_get_info2(item, &info);
+	vec2_set(&info.pos, 0.0f, 0.0f);
+	vec2_set(&info.scale, 1.0f, 1.0f);
+	info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+	info.rot = 0.0f;
+	vec2_set(&info.bounds, float(verticalWidth), float(verticalHeight));
+	info.bounds_type = OBS_BOUNDS_STRETCH;
+	info.bounds_alignment = OBS_ALIGN_CENTER;
+	info.crop_to_bounds = obs_sceneitem_get_bounds_crop(item);
+	obs_sceneitem_set_info2(item, &info);
 	emit verticalTransformChanged();
 }
 
@@ -1400,12 +1420,9 @@ void ShortsDock::RequestCenterToScreen()
 	if (selected.empty())
 		return;
 	obs_sceneitem_t *item = selected.front();
-	ItemTransform info = ReadItemTransform(item);
-	obs_source_t *source = obs_sceneitem_get_source(item);
-	float w = float(obs_source_get_width(source)) * info.scale.x;
-	float h = float(obs_source_get_height(source)) * info.scale.y;
+	vec2 size = GetItemSize(item);
 	vec2 pos;
-	vec2_set(&pos, (float(verticalWidth) - w) * 0.5f, (float(verticalHeight) - h) * 0.5f);
+	vec2_set(&pos, (float(verticalWidth) - size.x) * 0.5f, (float(verticalHeight) - size.y) * 0.5f);
 	obs_sceneitem_set_pos(item, &pos);
 	emit verticalTransformChanged();
 }
@@ -1419,13 +1436,17 @@ void ShortsDock::RequestResetTransform()
 	if (selected.empty())
 		return;
 	obs_sceneitem_t *item = selected.front();
-	vec2 one;
-	vec2_set(&one, 1.0f, 1.0f);
-	vec2 zero;
-	vec2_set(&zero, 0.0f, 0.0f);
-	obs_sceneitem_set_pos(item, &zero);
-	obs_sceneitem_set_scale(item, &one);
-	obs_sceneitem_set_rot(item, 0.0f);
+	obs_transform_info info{};
+	obs_sceneitem_get_info2(item, &info);
+	vec2_set(&info.pos, 0.0f, 0.0f);
+	vec2_set(&info.scale, 1.0f, 1.0f);
+	info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+	info.rot = 0.0f;
+	vec2_set(&info.bounds, 0.0f, 0.0f);
+	info.bounds_type = OBS_BOUNDS_NONE;
+	info.bounds_alignment = OBS_ALIGN_CENTER;
+	info.crop_to_bounds = false;
+	obs_sceneitem_set_info2(item, &info);
 	obs_sceneitem_crop crop = {0, 0, 0, 0};
 	obs_sceneitem_set_crop(item, &crop);
 	emit verticalTransformChanged();
@@ -2256,20 +2277,15 @@ void ShortsDock::DrawPreview(uint32_t cx, uint32_t cy)
 		gs_load_vertexbuffer(nullptr);
 	}
 
-	/* Render the ACTIVE VERTICAL SCENE (channel 0 / scene source) via OBS
-	 * graphics APIs — same pattern as OBS studio-mode preview. */
-	obs_source_t *renderSrc = nullptr;
-	if (canvas)
-		renderSrc = obs_canvas_get_channel(canvas, 0);
-	if (!renderSrc && scene)
-		renderSrc = obs_source_get_ref(obs_scene_get_source(scene));
-
-	if (renderSrc) {
-		obs_source_video_render(renderSrc);
-		obs_source_release(renderSrc);
-	} else if (canvas) {
-		/* Fallback: render the canvas view directly. */
+	/* Render the ACTIVE VERTICAL SCENE via OBS graphics APIs.
+	 * Prefer obs_canvas_render (PROGRAM view / channel 0) so the same tree
+	 * that receives ACTIVATE is what the display draws. */
+	if (canvas) {
 		obs_canvas_render(canvas);
+	} else if (scene) {
+		obs_source_t *source = obs_scene_get_source(scene);
+		if (source)
+			obs_source_video_render(source);
 	}
 
 	gs_load_vertexbuffer(nullptr);
@@ -2464,8 +2480,9 @@ void ShortsDock::ShowContextMenu(const QPoint &globalPos)
 
 vec2 ShortsDock::GetMouseEventPos(QMouseEvent *event)
 {
-	float pixelRatio = (float)preview->devicePixelRatioF();
-	float scale = pixelRatio * previewScale;
+	/* Match OBSBasicPreview: logical widget coords → canvas space. */
+	const float pixelRatio = preview ? (float)preview->devicePixelRatioF() : 1.0f;
+	const float scale = pixelRatio / std::max(previewScale, 0.0001f);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 	const float mx = (float)event->position().x();
 	const float my = (float)event->position().y();
@@ -2474,8 +2491,52 @@ vec2 ShortsDock::GetMouseEventPos(QMouseEvent *event)
 	const float my = (float)event->localPos().y();
 #endif
 	vec2 pos;
-	vec2_set(&pos, (mx - (float)previewX / pixelRatio) * pixelRatio / scale,
-		 (my - (float)previewY / pixelRatio) * pixelRatio / scale);
+	vec2_set(&pos, (mx - (float)previewX / pixelRatio) * scale, (my - (float)previewY / pixelRatio) * scale);
+	return pos;
+}
+
+vec2 ShortsDock::GetItemSize(obs_sceneitem_t *item)
+{
+	vec2 size{};
+	if (!item)
+		return size;
+
+	if (obs_sceneitem_get_bounds_type(item) != OBS_BOUNDS_NONE) {
+		obs_sceneitem_get_bounds(item, &size);
+		return size;
+	}
+
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	obs_sceneitem_crop crop{};
+	vec2 scale{};
+	obs_sceneitem_get_scale(item, &scale);
+	obs_sceneitem_get_crop(item, &crop);
+	size.x = std::max(float((int)obs_source_get_width(source) - crop.left - crop.right), 0.0f);
+	size.y = std::max(float((int)obs_source_get_height(source) - crop.top - crop.bottom), 0.0f);
+	vec2_mul(&size, &size, &scale);
+	return size;
+}
+
+vec3 ShortsDock::CalculateStretchPos(const vec3 &tl, const vec3 &br) const
+{
+	vec3 pos{};
+	if (!stretchItem)
+		return pos;
+
+	const uint32_t alignment = obs_sceneitem_get_alignment(stretchItem);
+	if (alignment & OBS_ALIGN_LEFT)
+		pos.x = tl.x;
+	else if (alignment & OBS_ALIGN_RIGHT)
+		pos.x = br.x;
+	else
+		pos.x = (br.x - tl.x) * 0.5f + tl.x;
+
+	if (alignment & OBS_ALIGN_TOP)
+		pos.y = tl.y;
+	else if (alignment & OBS_ALIGN_BOTTOM)
+		pos.y = br.y;
+	else
+		pos.y = (br.y - tl.y) * 0.5f + tl.y;
 	return pos;
 }
 
@@ -2531,8 +2592,6 @@ void ShortsDock::GetStretchHandleData(const vec2 &pos)
 	matrix4 boxTransform;
 	obs_sceneitem_get_box_transform(item, &boxTransform);
 
-	ItemTransform info = ReadItemTransform(item);
-
 	vec3 tl, tr, bl, br, tc, cl, cr, bc;
 	vec3_set(&tl, 0.0f, 0.0f, 0.0f);
 	vec3_set(&tr, 1.0f, 0.0f, 0.0f);
@@ -2553,7 +2612,9 @@ void ShortsDock::GetStretchHandleData(const vec2 &pos)
 	toScreen(cr);
 	toScreen(bc);
 
-	float radius = HANDLE_RADIUS * 1.5f / previewScale;
+	/* Larger, DPI-aware hit target so corners are easy to grab. */
+	const float pixelRatio = preview ? (float)preview->devicePixelRatioF() : 1.0f;
+	const float radius = std::max(12.0f, HANDLE_RADIUS * 2.5f * pixelRatio) / std::max(previewScale, 0.0001f);
 	vec3 mouse;
 	vec3_set(&mouse, pos.x, pos.y, 0.0f);
 
@@ -2578,20 +2639,27 @@ void ShortsDock::GetStretchHandleData(const vec2 &pos)
 	if (stretchHandle == ItemHandle::None)
 		return;
 
+	stretchItemSize = GetItemSize(item);
+
+	vec3 itemUL;
+	vec3_from_vec4(&itemUL, &boxTransform.t);
+	const float itemRot = obs_sceneitem_get_rot(item);
+
+	/* OBS-style item ↔ screen matrices from box UL + rotation. */
+	matrix4_identity(&itemToScreen);
+	matrix4_rotate_aa4f(&itemToScreen, &itemToScreen, 0.0f, 0.0f, 1.0f, RAD(itemRot));
+	matrix4_translate3f(&itemToScreen, &itemToScreen, itemUL.x, itemUL.y, 0.0f);
+
+	matrix4_identity(&screenToItem);
+	matrix4_translate3f(&screenToItem, &screenToItem, -itemUL.x, -itemUL.y, 0.0f);
+	matrix4_rotate_aa4f(&screenToItem, &screenToItem, 0.0f, 0.0f, 1.0f, RAD(-itemRot));
+
 	obs_sceneitem_get_crop(item, &startCrop);
 	obs_sceneitem_get_pos(item, &startItemPos);
 
 	obs_source_t *source = obs_sceneitem_get_source(item);
 	vec2_set(&cropSize, float(obs_source_get_width(source) - startCrop.left - startCrop.right),
 		 float(obs_source_get_height(source) - startCrop.top - startCrop.bottom));
-
-	info = ReadItemTransform(item);
-	vec2_set(&stretchItemSize, cropSize.x * info.scale.x, cropSize.y * info.scale.y);
-
-	matrix4_identity(&itemToScreen);
-	matrix4_translate3f(&itemToScreen, &itemToScreen, startItemPos.x, startItemPos.y, 0.0f);
-	matrix4_rotate_aa4f(&itemToScreen, &itemToScreen, 0.0f, 0.0f, 1.0f, RAD(info.rot));
-	matrix4_inv(&screenToItem, &itemToScreen);
 }
 
 void ShortsDock::MoveItems(const vec2 &pos)
@@ -2622,51 +2690,67 @@ void ShortsDock::StretchItem(const vec2 &pos)
 	if (!stretchItem || obs_sceneitem_locked(stretchItem))
 		return;
 
-	vec3 mouse;
-	vec3_set(&mouse, pos.x, pos.y, 0.0f);
-	vec3_transform(&mouse, &mouse, &screenToItem);
+	obs_source_t *source = obs_sceneitem_get_source(stretchItem);
+	const uint32_t source_cx = source ? obs_source_get_width(source) : 0;
+	const uint32_t source_cy = source ? obs_source_get_height(source) : 0;
+	if (!source_cx || !source_cy)
+		return;
 
-	vec2 scale;
+	const obs_bounds_type boundsType = obs_sceneitem_get_bounds_type(stretchItem);
+	const uint32_t stretchFlags = (uint32_t)stretchHandle;
 
-	uint32_t handle = (uint32_t)stretchHandle;
-	float width = stretchItemSize.x;
-	float height = stretchItemSize.y;
+	vec3 tl{}, br{};
+	vec3_set(&br, stretchItemSize.x, stretchItemSize.y, 0.0f);
 
-	float tl_x = (handle & ITEM_RIGHT) ? 0.0f : mouse.x;
-	float tl_y = (handle & ITEM_BOTTOM) ? 0.0f : mouse.y;
-	float br_x = (handle & ITEM_RIGHT) ? mouse.x : width;
-	float br_y = (handle & ITEM_BOTTOM) ? mouse.y : height;
+	vec3 pos3{};
+	vec3_set(&pos3, pos.x, pos.y, 0.0f);
+	vec3_transform(&pos3, &pos3, &screenToItem);
 
-	if (!(handle & (ITEM_LEFT | ITEM_RIGHT))) {
-		tl_x = 0.0f;
-		br_x = width;
+	if (stretchFlags & ITEM_LEFT)
+		tl.x = pos3.x;
+	else if (stretchFlags & ITEM_RIGHT)
+		br.x = pos3.x;
+
+	if (stretchFlags & ITEM_TOP)
+		tl.y = pos3.y;
+	else if (stretchFlags & ITEM_BOTTOM)
+		br.y = pos3.y;
+
+	if (tl.x > br.x)
+		std::swap(tl.x, br.x);
+	if (tl.y > br.y)
+		std::swap(tl.y, br.y);
+
+	vec2 size{};
+	vec2_set(&size, br.x - tl.x, br.y - tl.y);
+	vec2_abs(&size, &size);
+	size.x = std::max(1.0f, size.x);
+	size.y = std::max(1.0f, size.y);
+
+	if (boundsType != OBS_BOUNDS_NONE) {
+		/* Fitted items use bounds — corner drag must update bounds, not scale. */
+		obs_sceneitem_set_bounds(stretchItem, &size);
+	} else {
+		vec2 baseSize{};
+		vec2_set(&baseSize, float(source_cx), float(source_cy));
+		obs_sceneitem_crop crop{};
+		obs_sceneitem_get_crop(stretchItem, &crop);
+		baseSize.x -= float(crop.left + crop.right);
+		baseSize.y -= float(crop.top + crop.bottom);
+		if (baseSize.x < 1.0f)
+			baseSize.x = 1.0f;
+		if (baseSize.y < 1.0f)
+			baseSize.y = 1.0f;
+		vec2 scale{};
+		vec2_div(&scale, &size, &baseSize);
+		obs_sceneitem_set_scale(stretchItem, &scale);
 	}
-	if (!(handle & (ITEM_TOP | ITEM_BOTTOM))) {
-		tl_y = 0.0f;
-		br_y = height;
-	}
 
-	if (br_x < tl_x)
-		std::swap(br_x, tl_x);
-	if (br_y < tl_y)
-		std::swap(br_y, tl_y);
-
-	float newW = std::max(1.0f, br_x - tl_x);
-	float newH = std::max(1.0f, br_y - tl_y);
-
-	if (cropSize.x > 0.0f && cropSize.y > 0.0f)
-		vec2_set(&scale, newW / cropSize.x, newH / cropSize.y);
-	else
-		vec2_set(&scale, 1.0f, 1.0f);
-
-	obs_sceneitem_set_scale(stretchItem, &scale);
-
-	vec3 newPos;
-	vec3_set(&newPos, tl_x, tl_y, 0.0f);
-	vec3_transform(&newPos, &newPos, &itemToScreen);
-	vec2 p;
-	vec2_set(&p, newPos.x, newPos.y);
-	obs_sceneitem_set_pos(stretchItem, &p);
+	pos3 = CalculateStretchPos(tl, br);
+	vec3_transform(&pos3, &pos3, &itemToScreen);
+	vec2 newPos{};
+	vec2_set(&newPos, std::round(pos3.x), std::round(pos3.y));
+	obs_sceneitem_set_pos(stretchItem, &newPos);
 }
 
 void ShortsDock::UpdateCursor(uint32_t flags)
