@@ -145,9 +145,7 @@ private slots:
 
 private:
 	void BuildUI();
-	/* Single private host scene that projects the current main OBS scene. */
-	void EnsureHostScene();
-	void SyncHostFromMainScene(bool forceRefit = false);
+	void EnsureDefaultVerticalScene();
 	void RefreshVerticalWorkspace(bool force = false);
 	void ApplyCanvasFromSettings();
 	void CreateView();
@@ -156,10 +154,9 @@ private:
 	obs_scene_t *CreateVerticalScene(const char *name);
 	void SetCanvasSize(uint32_t width, uint32_t height);
 	void SetActiveScene(obs_scene_t *newScene, bool withTransition);
-	/* Keep PROGRAM channel 0 bound to the host scene (activation path). */
+	/* Keep PROGRAM channel 0 bound to the active vertical scene (activation path). */
 	void EnsureCanvasProgramChannel(bool forceRebind = false);
 	void LogRenderPipeline(const char *reason);
-	void ClearHostSceneItems();
 	void FitSceneItemToCanvas(obs_sceneitem_t *item);
 	void ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft);
 	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;

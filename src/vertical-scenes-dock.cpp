@@ -4,7 +4,9 @@
 #include <obs-module.h>
 
 #include <QAbstractItemView>
-#include <QLabel>
+#include <QHBoxLayout>
+#include <QListWidget>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace {
@@ -12,6 +14,15 @@ namespace {
 QString Translate(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
+}
+
+QToolButton *MakeToolButton(QWidget *parent, const QString &text, const QString &tip)
+{
+	auto *btn = new QToolButton(parent);
+	btn->setText(text);
+	btn->setToolTip(tip);
+	btn->setAutoRaise(true);
+	return btn;
 }
 
 } // namespace
@@ -33,15 +44,26 @@ void VerticalScenesDock::BuildUI()
 	root->setContentsMargins(4, 4, 4, 4);
 	root->setSpacing(4);
 
-	auto *hint = new QLabel(Translate("MainScenesHint"), this);
-	hint->setWordWrap(true);
-	hint->setStyleSheet(QStringLiteral("color: #b0b0b0; font-size: 11px;"));
-	root->addWidget(hint);
-
 	scenesList = new QListWidget(this);
-	scenesList->setSelectionMode(QAbstractItemView::SingleSelection);
+	scenesList->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	connect(scenesList, &QListWidget::itemSelectionChanged, this, &VerticalScenesDock::OnSelectionChanged);
 	root->addWidget(scenesList, 1);
+
+	auto *sceneBtns = new QHBoxLayout();
+	auto *addSceneBtn = MakeToolButton(this, QStringLiteral("+"), Translate("AddScene"));
+	auto *removeSceneBtn = MakeToolButton(this, QStringLiteral("\u2212"), Translate("RemoveScene"));
+	auto *dupSceneBtn = MakeToolButton(this, QStringLiteral("Dup"), Translate("DuplicateScene"));
+	auto *renameSceneBtn = MakeToolButton(this, QStringLiteral("Ren"), Translate("RenameScene"));
+	connect(addSceneBtn, &QToolButton::clicked, this, &VerticalScenesDock::OnAdd);
+	connect(removeSceneBtn, &QToolButton::clicked, this, &VerticalScenesDock::OnRemove);
+	connect(dupSceneBtn, &QToolButton::clicked, this, &VerticalScenesDock::OnDuplicate);
+	connect(renameSceneBtn, &QToolButton::clicked, this, &VerticalScenesDock::OnRename);
+	sceneBtns->addWidget(addSceneBtn);
+	sceneBtns->addWidget(removeSceneBtn);
+	sceneBtns->addWidget(dupSceneBtn);
+	sceneBtns->addWidget(renameSceneBtn);
+	sceneBtns->addStretch(1);
+	root->addLayout(sceneBtns);
 }
 
 void VerticalScenesDock::RefreshList()
@@ -68,4 +90,28 @@ void VerticalScenesDock::OnSelectionChanged()
 		return;
 
 	workspace->RequestSelectScene(uuid);
+}
+
+void VerticalScenesDock::OnAdd()
+{
+	if (workspace)
+		workspace->RequestAddScene();
+}
+
+void VerticalScenesDock::OnRemove()
+{
+	if (workspace)
+		workspace->RequestRemoveScene();
+}
+
+void VerticalScenesDock::OnDuplicate()
+{
+	if (workspace)
+		workspace->RequestDuplicateScene();
+}
+
+void VerticalScenesDock::OnRename()
+{
+	if (workspace)
+		workspace->RequestRenameScene();
 }

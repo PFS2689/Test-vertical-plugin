@@ -52,17 +52,23 @@ void VerticalSourcesDock::BuildUI()
 	root->addWidget(sourcesList, 1);
 
 	auto *sourceBtns = new QHBoxLayout();
-	auto *refreshBtn = MakeToolButton(this, QStringLiteral("↻"), Translate("AddSource"));
+	auto *addSrcBtn = MakeToolButton(this, QStringLiteral("+"), Translate("AddSource"));
+	auto *removeSrcBtn = MakeToolButton(this, QStringLiteral("\u2212"), Translate("RemoveSource"));
 	auto *visBtn = MakeToolButton(this, QStringLiteral("Vis"), Translate("ToggleVisible"));
 	auto *lockBtn = MakeToolButton(this, QStringLiteral("Lock"), Translate("ToggleLock"));
 	auto *propsBtn = MakeToolButton(this, QStringLiteral("Prop"), Translate("SourceProperties"));
 	auto *filtersBtn = MakeToolButton(this, QStringLiteral("Filt"), Translate("SourceFilters"));
-	connect(refreshBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnAdd);
+	auto *upBtn = MakeToolButton(this, QStringLiteral("Up"), Translate("MoveSourceUp"));
+	auto *downBtn = MakeToolButton(this, QStringLiteral("Dn"), Translate("MoveSourceDown"));
+	connect(addSrcBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnAdd);
+	connect(removeSrcBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnRemove);
 	connect(visBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnToggleVisible);
 	connect(lockBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnToggleLock);
 	connect(propsBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnProperties);
 	connect(filtersBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnFilters);
-	for (auto *b : {refreshBtn, visBtn, lockBtn, propsBtn, filtersBtn})
+	connect(upBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnMoveUp);
+	connect(downBtn, &QToolButton::clicked, this, &VerticalSourcesDock::OnMoveDown);
+	for (auto *b : {addSrcBtn, removeSrcBtn, visBtn, lockBtn, propsBtn, filtersBtn, upBtn, downBtn})
 		sourceBtns->addWidget(b);
 	sourceBtns->addStretch(1);
 	root->addLayout(sourceBtns);
