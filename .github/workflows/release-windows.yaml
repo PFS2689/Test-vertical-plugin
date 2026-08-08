@@ -206,20 +206,25 @@ jobs:
           TAG: ${{ steps.check.outputs.tag }}
         run: |
           set -euo pipefail
-          # Drop every existing asset on this tag so names/checksums/dates are not
-          # inherited from an older 1.0.5 publish (e.g. hyphenated MSVC Setup.exe).
-          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "No existing GitHub Release for $TAG — nothing to prune."
+          REPO="${{ github.repository }}"
+          # Resolve by tag_name (not /releases/tags/{tag}) so a retargeted tag
+          # still finds the existing GitHub Release and can drop stale assets.
+          RELEASE_ID="$(gh api "repos/${REPO}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name==\"${TAG}\") | .id" | head -n1 || true)"
+          if [[ -z "${RELEASE_ID}" ]]; then
+            echo "No existing GitHub Release for tag ${TAG} — nothing to prune."
             exit 0
           fi
-          mapfile -t ASSET_IDS < <(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].id')
+          echo "Pruning assets on release id=${RELEASE_ID} (tag ${TAG})"
+          mapfile -t ASSET_IDS < <(gh api "repos/${REPO}/releases/${RELEASE_ID}" --jq '.assets[].id')
           if [[ ${#ASSET_IDS[@]} -eq 0 ]]; then
-            echo "Release $TAG has no assets to remove."
+            echo "Release ${TAG} has no assets to remove."
             exit 0
           fi
           for id in "${ASSET_IDS[@]}"; do
-            echo "Deleting stale release asset id=$id"
-            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/${id}"
+            [[ -z "${id}" ]] && continue
+            echo "Deleting stale release asset id=${id}"
+            gh api -X DELETE "repos/${REPO}/releases/assets/${id}"
           done
 
       - name: Write release notes
