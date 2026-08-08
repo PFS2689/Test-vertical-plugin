@@ -11,6 +11,8 @@ Vertical Shorts Plugin 1.0.5 Setup.exe
 
 (Product name and version come from `buildspec.json`.)
 
+Release/build timestamps are generated at CI configure/package/publish time (`PLUGIN_BUILD_TIMESTAMP`, `PackageTimestampUtc`, GitHub Release **Last Updated**). They must never be hard-coded or copied from an older 1.0.5 artifact.
+
 ## Permanent AppId (do not change)
 
 ```
