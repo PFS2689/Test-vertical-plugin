@@ -79,23 +79,47 @@ public:
 	void PopulateScenesList(QListWidget *list);
 
 	void RequestAddSource();
+	void ShowAddSourceMenu(QWidget *button);
 	void RequestRemoveSource();
 	void RequestToggleSourceVisible();
 	void RequestToggleSourceLock();
+	void RequestToggleSourceVisibleById(qint64 itemId);
+	void RequestToggleSourceLockById(qint64 itemId);
 	void RequestSourceProperties();
 	void RequestSourceFilters();
+	void RequestRenameSource();
+	void RequestDuplicateSource();
+	void RequestCopySource();
+	void RequestPasteSource();
+	void RequestCopyTransform();
+	void RequestPasteTransform();
 	void RequestSourceMoveUp();
 	void RequestSourceMoveDown();
+	void RequestSourceMoveTop();
+	void RequestSourceMoveBottom();
+	void RequestReorderSources(const QList<qint64> &topToBottomIds);
 	void RequestSelectSource(qint64 itemId);
 	void PopulateSourcesList(QListWidget *list);
 
 	void RequestFitToScreen();
 	void RequestStretchToScreen();
 	void RequestCenterToScreen();
+	void RequestCenterHorizontally();
+	void RequestCenterVertically();
+	void RequestRotateDegrees(float delta);
+	void RequestFlipHorizontal();
+	void RequestFlipVertical();
 	void RequestResetTransform();
+	void RequestEditTransform();
+	void RequestCropDialog();
 	void RequestTransformEdited(double x, double y, double w, double h, double rot);
 	void PopulateTransformControls(QDoubleSpinBox *x, QDoubleSpinBox *y, QDoubleSpinBox *w, QDoubleSpinBox *h,
 				       QDoubleSpinBox *rot);
+	bool HasSelectedVerticalSource() const;
+	bool HasSourceClipboard() const;
+	bool HasTransformClipboard() const;
+	uint32_t VerticalCanvasWidth() const { return verticalWidth; }
+	uint32_t VerticalCanvasHeight() const { return verticalHeight; }
 
 	void RequestSetTransition(const QString &name);
 	void RequestSetTransitionDuration(int ms);
