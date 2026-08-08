@@ -167,7 +167,7 @@ var
   MetaPath: String;
 begin
   Result := '';
-  MetaPath := PluginInstallRoot() + '\install-meta.ini';
+  MetaPath := PluginInstallRoot + '\install-meta.ini';
   if FileExists(MetaPath) then
     Result := GetIniString('Install', 'DisplayVersion', '', MetaPath);
 end;
@@ -176,20 +176,20 @@ function DetectPreviousVersion: String;
 var
   Ver: String;
 begin
-  Ver := GetInstalledVersionFromMeta();
+  Ver := GetInstalledVersionFromMeta;
   if Ver = '' then
-    Ver := GetInstalledVersionFromRegistry();
+    Ver := GetInstalledVersionFromRegistry;
   Result := Ver;
 end;
 
 function PluginDllExists: Boolean;
 begin
-  Result := FileExists(PluginInstallRoot() + '\bin\64bit\obs-shorts-vertical.dll');
+  Result := FileExists(PluginInstallRoot + '\bin\64bit\obs-shorts-vertical.dll');
 end;
 
 function IsUpgradeInstall: Boolean;
 begin
-  Result := (DetectPreviousVersion() <> '') or PluginDllExists();
+  Result := (DetectPreviousVersion <> '') or PluginDllExists;
 end;
 
 function CompareVersionParts(const A, B: String): Integer;
@@ -234,13 +234,13 @@ begin
     if Wnd = 0 then begin
       { Window gone — wait briefly for process/mutex teardown }
       Sleep(500);
-      Result := not IsOBSRunning();
+      Result := not IsOBSRunning;
       exit;
     end;
     PostMessage(Wnd, WM_CLOSE, 0, 0);
     Sleep(250);
   end;
-  Result := not IsOBSRunning();
+  Result := not IsOBSRunning;
 end;
 
 function ShowTwoButtonDialog(const Title, Body, PrimaryCaption: String; PrimaryResult: Integer): Integer;
@@ -250,7 +250,7 @@ var
   PrimaryBtn, CancelBtn: TNewButton;
   ButtonTop, ButtonWidth, Gap: Integer;
 begin
-  Form := CreateCustomForm();
+  Form := CreateCustomForm;
   try
     Form.Caption := Title;
     Form.ClientWidth := ScaleX(500);
@@ -292,7 +292,7 @@ begin
     PrimaryBtn.Left := CancelBtn.Left - Gap - ButtonWidth;
     PrimaryBtn.Top := ButtonTop;
 
-    Result := Form.ShowModal();
+    Result := Form.ShowModal;
   finally
     Form.Free;
   end;
@@ -317,7 +317,7 @@ var
   Answer: Integer;
 begin
   Result := True;
-  if not IsOBSRunning() then
+  if not IsOBSRunning then
     exit;
 
   Answer := ShowTwoButtonDialog(
@@ -333,7 +333,7 @@ begin
     exit;
   end;
 
-  if not TryCloseOBSWindows() then begin
+  if not TryCloseOBSWindows then begin
     MsgBox(
       'OBS Studio is still running.'#13#10#13#10 +
       'Please close OBS manually, then run Setup again.'#13#10 +
@@ -363,7 +363,7 @@ begin
     exit;
   end;
 
-  Root := PluginInstallRoot();
+  Root := PluginInstallRoot;
   CopyFileIfExists(Root + '\install-meta.ini', Dest + '\install-meta.ini');
 
   { Lightweight plugin_config copy only — never duplicate recordings/media. }
@@ -380,7 +380,7 @@ begin
     'NewVersion={#MyAppVersion}'#13#10 +
     'AppId={' + '{#MyAppIdGuid}' + '}'#13#10 +
     'AppDir=' + Root + #13#10 +
-    'PreviousDllExists=' + IntToStr(Integer(PluginDllExists())) + #13#10 +
+    'PreviousDllExists=' + IntToStr(Integer(PluginDllExists)) + #13#10 +
     'UserConfig=OBS scene collection key obs-shorts-vertical (not overwritten)'#13#10 +
     'Credentials=Windows Credential Manager (not overwritten)'#13#10 +
     'Note=Backup excludes recordings and large media files.'#13#10,
@@ -392,7 +392,7 @@ var
   Root, P: String;
 begin
   Result := True;
-  Root := PluginInstallRoot();
+  Root := PluginInstallRoot;
   { Only Vertical Shorts leftovers under the plugin tree — never OBS core or user data. }
   P := Root + '\bin\64bit\obs-shorts-vertical.pdb';
   if FileExists(P) then
@@ -402,16 +402,16 @@ begin
     DelTree(P, True, True, True);
 end;
 
-function InitializeSetup(): Boolean;
+function InitializeSetup: Boolean;
 var
   Answer: Integer;
   Prev, Cur: String;
 begin
   Result := True;
   Cur := '{#MyAppVersion}';
-  Prev := DetectPreviousVersion();
+  Prev := DetectPreviousVersion;
   GPreviousVersion := Prev;
-  GIsUpgrade := IsUpgradeInstall();
+  GIsUpgrade := IsUpgradeInstall;
   GUpgradeBackupDir := '';
 
   if GIsUpgrade then begin
@@ -436,7 +436,7 @@ begin
     end;
   end;
 
-  if not EnsureOBSClosed() then
+  if not EnsureOBSClosed then
     Result := False;
 end;
 
@@ -445,19 +445,19 @@ begin
   NeedsRestart := False;
   Result := '';
 
-  if IsOBSRunning() then begin
-    if not EnsureOBSClosed() then begin
+  if IsOBSRunning then begin
+    if not EnsureOBSClosed then begin
       Result := 'OBS Studio is still running. Close it and retry Setup.';
       exit;
     end;
   end;
 
   if GIsUpgrade then begin
-    if not CreateUpgradeBackup() then begin
+    if not CreateUpgradeBackup then begin
       Result := 'Could not create a lightweight upgrade backup under LocalAppData.';
       exit;
     end;
-    RemoveObsoletePluginBins();
+    RemoveObsoletePluginBins;
   end;
 end;
 
