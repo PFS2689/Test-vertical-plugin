@@ -5,6 +5,7 @@
 class QListWidget;
 class ShortsDock;
 
+/* Lists main OBS scenes (not a parallel vertical scene collection). */
 class VerticalScenesDock : public QFrame {
 	Q_OBJECT
 
@@ -14,10 +15,6 @@ public:
 private slots:
 	void RefreshList();
 	void OnSelectionChanged();
-	void OnAdd();
-	void OnRemove();
-	void OnDuplicate();
-	void OnRename();
 
 private:
 	void BuildUI();

@@ -352,7 +352,8 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 
 	BuildUI();
 	CreateView();
-	EnsureDefaultVerticalScene();
+	EnsureHostScene();
+	SyncHostFromMainScene(true);
 	if (outputs) {
 		outputs->SetVideo(video);
 		outputs->ApplySettings(settings);
@@ -367,7 +368,10 @@ ShortsDock::ShortsDock(QWidget *parent) : QFrame(parent)
 	EmitSceneUiChanged();
 	emit verticalTransitionsChanged();
 
-	QTimer::singleShot(0, this, [this]() { EnsureBufferIfConfigured(); });
+	QTimer::singleShot(0, this, [this]() {
+		SyncHostFromMainScene(true);
+		EnsureBufferIfConfigured();
+	});
 }
 
 ShortsDock::~ShortsDock()
@@ -572,27 +576,58 @@ void ShortsDock::RefreshVerticalWorkspace(bool force)
 	CreateView();
 	if (outputs)
 		outputs->SetVideo(video);
-	EnsureDefaultVerticalScene();
-	/* Always rebind PROGRAM channel — SetActiveScene early-outs when the
-	 * scene pointer is unchanged, which left channel 0 empty after canvas
-	 * recreate/reset and produced a blank Vertical Shorts preview. */
+	EnsureHostScene();
+	SyncHostFromMainScene(force);
 	EnsureCanvasProgramChannel(force);
 	EmitSourceUiChanged();
 	if (force)
 		LogRenderPipeline("RefreshVerticalWorkspace");
 }
 
-void ShortsDock::EnsureDefaultVerticalScene()
+void ShortsDock::ClearHostSceneItems()
 {
-	if (!verticalScenes.isEmpty()) {
-		if (!scene && !sceneOrder.isEmpty() && !loadingSettings)
-			RequestSelectScene(sceneOrder.first());
+	if (!scene)
+		return;
+	std::vector<OBSSceneItem> items;
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *p) -> bool {
+			static_cast<std::vector<OBSSceneItem> *>(p)->emplace_back(item);
+			return true;
+		},
+		&items);
+	for (OBSSceneItem &item : items)
+		obs_sceneitem_remove(item);
+}
+
+void ShortsDock::EnsureHostScene()
+{
+	CreateView();
+	if (!canvas)
+		return;
+
+	if (scene) {
+		AttachScenesToCanvas();
+		EnsureCanvasProgramChannel(false);
 		return;
 	}
 
-	obs_scene_t *created = CreateVerticalScene("Vertical Scene");
-	if (!created)
+	/* Discard any leftover parallel vertical scenes from older plugin versions. */
+	for (auto it = verticalScenes.begin(); it != verticalScenes.end(); ++it) {
+		obs_scene_t *sc = it.value();
+		if (!sc)
+			continue;
+		if (canvas)
+			obs_canvas_scene_remove(sc);
+	}
+	verticalScenes.clear();
+	sceneOrder.clear();
+
+	obs_scene_t *created = CreateVerticalScene("Vertical Shorts Host");
+	if (!created) {
+		blog(LOG_ERROR, "[obs-shorts-vertical] Failed to create vertical host scene");
 		return;
+	}
 	obs_source_t *src = obs_scene_get_source(created);
 	const char *uuid = src ? obs_source_get_uuid(src) : nullptr;
 	if (uuid && *uuid) {
@@ -602,6 +637,71 @@ void ShortsDock::EnsureDefaultVerticalScene()
 		SetActiveScene(created, false);
 	}
 	obs_scene_release(created);
+	blog(LOG_INFO, "[obs-shorts-vertical] Host scene ready — projects main OBS scenes (no parallel vertical scenes)");
+}
+
+void ShortsDock::SyncHostFromMainScene(bool forceRefit)
+{
+	if (clearing || loadingSettings)
+		return;
+
+	EnsureHostScene();
+	if (!scene || !canvas)
+		return;
+
+	OBSSourceAutoRelease mainSrc = obs_frontend_get_current_scene();
+	if (!mainSrc) {
+		blog(LOG_WARNING, "[obs-shorts-vertical] No current main OBS scene to project");
+		return;
+	}
+
+	obs_source_t *mainPtr = mainSrc;
+	obs_sceneitem_t *projection = nullptr;
+	size_t itemCount = 0;
+	struct FindProj {
+		obs_source_t *want;
+		obs_sceneitem_t *found;
+		size_t *count;
+	} find{mainPtr, nullptr, &itemCount};
+
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *p) -> bool {
+			auto *f = static_cast<FindProj *>(p);
+			(*f->count)++;
+			if (obs_sceneitem_get_source(item) == f->want)
+				f->found = item;
+			return true;
+		},
+		&find);
+	projection = find.found;
+
+	if (!projection || itemCount != 1) {
+		ClearHostSceneItems();
+		obs_sceneitem_t *item = obs_scene_add(scene, mainSrc);
+		if (!item) {
+			blog(LOG_ERROR, "[obs-shorts-vertical] Failed to project main scene '%s' onto host",
+			     obs_source_get_name(mainSrc));
+			return;
+		}
+		obs_sceneitem_set_visible(item, true);
+		FitSceneItemToCanvas(item);
+		obs_scene_enum_items(scene, ClearSelection, nullptr);
+		obs_sceneitem_select(item, true);
+		projection = item;
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] Projecting main scene '%s' (%ux%u) onto vertical canvas %ux%u",
+		     obs_source_get_name(mainSrc), obs_source_get_width(mainSrc), obs_source_get_height(mainSrc),
+		     verticalWidth, verticalHeight);
+	} else if (forceRefit) {
+		FitSceneItemToCanvas(projection);
+	}
+
+	obs_source_set_enabled(mainSrc, true);
+	EnsureCanvasProgramChannel(true);
+	EmitSceneUiChanged();
+	EmitSourceUiChanged();
+	LogRenderPipeline("SyncHostFromMainScene");
 }
 
 void ShortsDock::EmitSceneUiChanged()
@@ -929,21 +1029,26 @@ void ShortsDock::PopulateScenesList(QListWidget *list)
 {
 	if (!list)
 		return;
-	const QString current = ActiveSceneUuid();
+
 	list->clear();
+	OBSSourceAutoRelease current = obs_frontend_get_current_scene();
+	const char *currentUuid = current ? obs_source_get_uuid(current) : nullptr;
+
+	struct obs_frontend_source_list scenes = {};
+	obs_frontend_get_scenes(&scenes);
 	int select = -1;
-	for (int i = 0; i < sceneOrder.size(); ++i) {
-		const QString &uuid = sceneOrder[i];
-		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-		if (!sc)
+	for (size_t i = 0; i < scenes.sources.num; i++) {
+		obs_source_t *src = scenes.sources.array[i];
+		if (!src)
 			continue;
-		obs_source_t *src = obs_scene_get_source(sc);
+		const char *uuid = obs_source_get_uuid(src);
 		auto *row = new QListWidgetItem(QString::fromUtf8(obs_source_get_name(src)));
-		row->setData(Qt::UserRole, uuid);
+		row->setData(Qt::UserRole, uuid ? QString::fromUtf8(uuid) : QString());
 		list->addItem(row);
-		if (uuid == current)
+		if (uuid && currentUuid && strcmp(uuid, currentUuid) == 0)
 			select = list->count() - 1;
 	}
+	obs_frontend_source_list_free(&scenes);
 	if (select >= 0)
 		list->setCurrentRow(select);
 }
@@ -952,113 +1057,37 @@ void ShortsDock::RequestSelectScene(const QString &uuid)
 {
 	if (loadingSettings || clearing || uuid.isEmpty())
 		return;
-	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-	if (!sc)
+
+	/* Scene selector switches the main OBS scene — Vertical Shorts follows it. */
+	OBSSourceAutoRelease src = obs_get_source_by_uuid(uuid.toUtf8().constData());
+	if (!src || !obs_source_is_scene(src))
 		return;
-	SetActiveScene(sc, true);
-	if (automation) {
-		obs_source_t *src = obs_scene_get_source(sc);
+
+	obs_frontend_set_current_scene(src);
+	SyncHostFromMainScene(false);
+	if (automation)
 		automation->OnSceneChanged(uuid, QString::fromUtf8(obs_source_get_name(src)));
-	}
 }
 
 void ShortsDock::RequestAddScene()
 {
-	bool ok = false;
-	QString name = QInputDialog::getText(this, Translate("AddScene"), Translate("NewSceneName"), QLineEdit::Normal,
-					     Translate("NewSceneName"), &ok);
-	if (!ok || name.trimmed().isEmpty())
-		return;
-
-	obs_scene_t *created = CreateVerticalScene(name.trimmed().toUtf8().constData());
-	if (!created)
-		return;
-	obs_source_t *src = obs_scene_get_source(created);
-	const char *uuid = src ? obs_source_get_uuid(src) : nullptr;
-	if (uuid && *uuid) {
-		const QString key = QString::fromUtf8(uuid);
-		verticalScenes.insert(key, created);
-		sceneOrder.append(key);
-		SetActiveScene(created, false);
-	}
-	obs_scene_release(created);
-	EmitSceneUiChanged();
+	/* Vertical Shorts uses main OBS scenes — create scenes in the main Scenes dock. */
+	QMessageBox::information(this, Translate("AddScene"), Translate("UseMainScenesOnly"));
 }
 
 void ShortsDock::RequestRemoveScene()
 {
-	const QString uuid = ActiveSceneUuid();
-	if (uuid.isEmpty())
-		return;
-	if (QMessageBox::question(this, Translate("RemoveScene"), Translate("ConfirmRemoveScene")) != QMessageBox::Yes)
-		return;
-
-	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-	if (scene && ActiveSceneUuid() == uuid)
-		SetActiveScene(nullptr, false);
-
-	if (sc) {
-		obs_source_t *src = obs_scene_get_source(sc);
-		if (canvas)
-			obs_canvas_scene_remove(sc);
-		if (src)
-			obs_source_remove(src);
-	}
-
-	verticalScenes.remove(uuid);
-	sceneOrder.removeAll(uuid);
-	if (!sceneOrder.isEmpty())
-		RequestSelectScene(sceneOrder.first());
-	else
-		EnsureDefaultVerticalScene();
-	EmitSceneUiChanged();
+	QMessageBox::information(this, Translate("RemoveScene"), Translate("UseMainScenesOnly"));
 }
 
 void ShortsDock::RequestDuplicateScene()
 {
-	const QString uuid = ActiveSceneUuid();
-	obs_scene_t *srcScene = FindVerticalSceneByUuid(uuid);
-	if (!srcScene)
-		return;
-	obs_source_t *src = obs_scene_get_source(srcScene);
-	bool ok = false;
-	QString name = QInputDialog::getText(this, Translate("DuplicateScene"), Translate("NewSceneName"),
-					     QLineEdit::Normal,
-					     QString::fromUtf8(obs_source_get_name(src)) + QStringLiteral(" Copy"), &ok);
-	if (!ok || name.trimmed().isEmpty())
-		return;
-
-	obs_scene_t *dup = obs_scene_duplicate(srcScene, name.trimmed().toUtf8().constData(), OBS_SCENE_DUP_REFS);
-	if (!dup)
-		return;
-	if (canvas)
-		obs_canvas_move_scene(dup, canvas);
-	obs_source_t *dupSrc = obs_scene_get_source(dup);
-	const char *newUuid = dupSrc ? obs_source_get_uuid(dupSrc) : nullptr;
-	if (newUuid && *newUuid) {
-		const QString key = QString::fromUtf8(newUuid);
-		verticalScenes.insert(key, dup);
-		sceneOrder.append(key);
-		SetActiveScene(dup, false);
-	}
-	obs_scene_release(dup);
-	EmitSceneUiChanged();
+	QMessageBox::information(this, Translate("DuplicateScene"), Translate("UseMainScenesOnly"));
 }
 
 void ShortsDock::RequestRenameScene()
 {
-	const QString uuid = ActiveSceneUuid();
-	obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-	if (!sc)
-		return;
-	obs_source_t *src = obs_scene_get_source(sc);
-	bool ok = false;
-	QString name = QInputDialog::getText(this, Translate("RenameScene"), Translate("RenameScenePrompt"),
-					     QLineEdit::Normal, QString::fromUtf8(obs_source_get_name(src)), &ok);
-	if (!ok || name.trimmed().isEmpty())
-		return;
-	obs_source_set_name(src, name.trimmed().toUtf8().constData());
-	EmitSceneUiChanged();
+	QMessageBox::information(this, Translate("RenameScene"), Translate("UseMainScenesOnly"));
 }
 
 void ShortsDock::PopulateSourcesList(QListWidget *list)
@@ -1068,12 +1097,16 @@ void ShortsDock::PopulateSourcesList(QListWidget *list)
 	list->clear();
 	if (!scene)
 		return;
+
+	/* Host holds the projected main OBS scene (and its USB camera, etc.). */
 	obs_scene_enum_items(
 		scene,
 		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
 			auto *lw = static_cast<QListWidget *>(param);
 			obs_source_t *source = obs_sceneitem_get_source(item);
 			QString label = QString::fromUtf8(obs_source_get_name(source));
+			if (obs_source_is_scene(source))
+				label = QStringLiteral("Main: ") + label;
 			if (!obs_sceneitem_visible(item))
 				label += QStringLiteral(" [hid]");
 			if (obs_sceneitem_locked(item))
@@ -1101,104 +1134,10 @@ void ShortsDock::RequestSelectSource(qint64 itemId)
 
 void ShortsDock::RequestAddSource()
 {
-	if (!scene) {
-		EnsureDefaultVerticalScene();
-		if (!scene)
-			return;
-	}
-
-	/* Prefer sharing an existing OBS source so the same USB camera can appear in
-	 * main (horizontal) AND Vertical Shorts with independent scene-item transforms.
-	 * Creating a second Video Capture Device usually fails on Windows (exclusive). */
-	std::vector<std::string> names;
-	std::vector<OBSSource> sources;
-	struct EnumData {
-		std::vector<std::string> *names;
-		std::vector<OBSSource> *sources;
-	} data{&names, &sources};
-
-	obs_enum_sources(
-		[](void *param, obs_source_t *source) -> bool {
-			auto *d = static_cast<EnumData *>(param);
-			uint32_t flags = obs_source_get_output_flags(source);
-			if ((flags & OBS_SOURCE_VIDEO) == 0)
-				return true;
-			if (obs_source_is_group(source))
-				return true;
-			d->names->emplace_back(obs_source_get_name(source));
-			d->sources->emplace_back(source);
-			return true;
-		},
-		&data);
-
-	QStringList items;
-	const QString createVcd = Translate("CreateVideoCaptureDevice");
-	/* Existing sources first — default selection is the first existing source. */
-	for (const auto &n : names)
-		items << QString::fromUtf8(n.c_str());
-	items << createVcd;
-	const int defaultIndex = names.empty() ? 0 : 0;
-
-	bool ok = false;
-	QString chosen = QInputDialog::getItem(this, Translate("AddSource"), Translate("SelectSource"), items,
-					       defaultIndex, false, &ok);
-	if (!ok || chosen.isEmpty())
-		return;
-
-	if (chosen == createVcd) {
-#ifdef _WIN32
-		const char *prefer = "dshow_input";
-#elif defined(__APPLE__)
-		const char *prefer = "av_capture_input";
-#else
-		const char *prefer = "v4l2_input";
-#endif
-		const char *id = obs_get_latest_input_type_id(prefer);
-		if (!id || !*id)
-			id = prefer;
-		if (!obs_source_get_display_name(id)) {
-			QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
-			return;
-		}
-		QString placeHolder = QString::fromUtf8(obs_source_get_display_name(id));
-		if (placeHolder.isEmpty())
-			placeHolder = QStringLiteral("Video Capture Device");
-		QString text = placeHolder;
-		int i = 2;
-		OBSSourceAutoRelease existing = obs_get_source_by_name(text.toUtf8().constData());
-		while (existing) {
-			text = QStringLiteral("%1 %2").arg(placeHolder).arg(i++);
-			existing = obs_get_source_by_name(text.toUtf8().constData());
-		}
-
-		/* New public source — do not use this path if the camera is already
-		 * open in main OBS; prefer selecting the existing source above. */
-		obs_source_t *created = obs_source_create(id, text.toUtf8().constData(), nullptr, nullptr);
-		if (!created) {
-			QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
-			return;
-		}
-		AddSourceToActiveScene(created, true);
-		if (obs_source_configurable(created))
-			obs_frontend_open_source_properties(created);
-		const uint32_t sw = obs_source_get_width(created);
-		const uint32_t sh = obs_source_get_height(created);
-		if (sw == 0 || sh == 0) {
-			QMessageBox::warning(this, Translate("AddSource"), Translate("CameraDeviceInUseHint"));
-		}
-		obs_source_release(created);
-		EmitSourceUiChanged();
-		return;
-	}
-
-	for (size_t i = 0; i < names.size(); i++) {
-		if (chosen != QString::fromUtf8(names[i].c_str()))
-			continue;
-		/* Shared source reference: same camera hardware, independent vertical transform. */
-		AddSourceToActiveScene(sources[i], true);
-		break;
-	}
-	EmitSourceUiChanged();
+	/* Vertical canvas projects the current main OBS scene (including its USB camera).
+	 * Add/manage sources in the main OBS Sources dock, then refresh projection. */
+	SyncHostFromMainScene(true);
+	QMessageBox::information(this, Translate("AddSource"), Translate("SourcesComeFromMainScene"));
 }
 
 void ShortsDock::FitSceneItemToCanvas(obs_sceneitem_t *item)
@@ -1301,6 +1240,8 @@ void ShortsDock::RequestRemoveSource()
 		return;
 	for (obs_sceneitem_t *item : selected)
 		obs_sceneitem_remove(item);
+	/* Always keep the current main OBS scene projected. */
+	SyncHostFromMainScene(true);
 	EmitSourceUiChanged();
 }
 
@@ -1573,12 +1514,21 @@ void ShortsDock::RequestPreviewTransition()
 
 void ShortsDock::RequestTriggerTransition()
 {
-	if (sceneOrder.size() < 2)
+	/* Advance to the next main OBS scene and re-project it. */
+	QStringList names, uuids;
+	CollectSceneLists(names, uuids);
+	if (uuids.size() < 2)
 		return;
-	const QString cur = ActiveSceneUuid();
-	int idx = sceneOrder.indexOf(cur);
-	int next = (idx + 1) % sceneOrder.size();
-	RequestSelectScene(sceneOrder[next]);
+
+	OBSSourceAutoRelease current = obs_frontend_get_current_scene();
+	const char *curUuid = current ? obs_source_get_uuid(current) : nullptr;
+	int idx = 0;
+	if (curUuid) {
+		const int found = uuids.indexOf(QString::fromUtf8(curUuid));
+		if (found >= 0)
+			idx = found;
+	}
+	RequestSelectScene(uuids[(idx + 1) % uuids.size()]);
 }
 
 void ShortsDock::OnGoLive()
@@ -1811,8 +1761,7 @@ void ShortsDock::ApplyCanvasPresetChange()
 		CreateView();
 		if (outputs)
 			outputs->SetVideo(video);
-		if (canvas && scene)
-			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+		SyncHostFromMainScene(true);
 	}
 
 	obs_frontend_save();
@@ -1854,14 +1803,17 @@ void ShortsDock::CollectSceneLists(QStringList &names, QStringList &uuids) const
 {
 	names.clear();
 	uuids.clear();
-	for (const QString &uuid : sceneOrder) {
-		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-		if (!sc)
+	struct obs_frontend_source_list scenes = {};
+	obs_frontend_get_scenes(&scenes);
+	for (size_t i = 0; i < scenes.sources.num; i++) {
+		obs_source_t *src = scenes.sources.array[i];
+		if (!src)
 			continue;
-		obs_source_t *src = obs_scene_get_source(sc);
+		const char *uuid = obs_source_get_uuid(src);
 		names << QString::fromUtf8(obs_source_get_name(src));
-		uuids << uuid;
+		uuids << (uuid ? QString::fromUtf8(uuid) : QString());
 	}
+	obs_frontend_source_list_free(&scenes);
 }
 
 void ShortsDock::OnSettings()
@@ -1900,8 +1852,7 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 		CreateView();
 		if (outputs)
 			outputs->SetVideo(video);
-		if (canvas && scene)
-			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+		SyncHostFromMainScene(true);
 	}
 
 	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
@@ -2001,23 +1952,16 @@ void ShortsDock::SaveSettings(obs_data_t *data)
 	}
 	SaveHotkeys(data);
 
-	OBSDataArrayAutoRelease arr = obs_data_array_create();
-	for (const QString &uuid : sceneOrder) {
-		obs_scene_t *sc = FindVerticalSceneByUuid(uuid);
-		if (!sc)
-			continue;
-		OBSDataAutoRelease obj = obs_data_create();
-		obs_data_set_string(obj, "uuid", uuid.toUtf8().constData());
-		obs_data_set_string(obj, "main_uuid", uuid.toUtf8().constData());
-		OBSDataAutoRelease sceneData = obs_save_source(obs_scene_get_source(sc));
-		obs_data_set_obj(obj, "source", sceneData);
-		obs_data_array_push_back(arr, obj);
-	}
-	obs_data_set_array(data, "scenes", arr);
-	obs_data_set_array(data, "vertical_mirrors", arr);
+	/* No parallel vertical scene collection — Vertical Shorts projects main OBS scenes. */
+	OBSDataArrayAutoRelease empty = obs_data_array_create();
+	obs_data_set_array(data, "scenes", empty);
+	obs_data_set_array(data, "vertical_mirrors", empty);
 	obs_data_set_string(data, "vertical_transition", verticalTransitionName.toUtf8().constData());
 	obs_data_set_int(data, "vertical_transition_ms", verticalTransitionDurationMs);
-	obs_data_set_string(data, "active_vertical_scene", ActiveSceneUuid().toUtf8().constData());
+	OBSSourceAutoRelease current = obs_frontend_get_current_scene();
+	const char *curUuid = current ? obs_source_get_uuid(current) : nullptr;
+	obs_data_set_string(data, "active_vertical_scene", curUuid ? curUuid : "");
+	obs_data_set_bool(data, "uses_main_scenes", true);
 }
 
 void ShortsDock::LoadSettings(obs_data_t *data)
@@ -2074,43 +2018,9 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 	if (outputs)
 		outputs->ApplySettings(settings);
 
+	/* Drop legacy parallel vertical scenes — always project main OBS scenes. */
 	verticalScenes.clear();
 	sceneOrder.clear();
-
-	obs_data_array_t *arr = obs_data_get_array(data, "vertical_mirrors");
-	if (!arr)
-		arr = obs_data_get_array(data, "scenes");
-
-	if (arr) {
-		const size_t count = obs_data_array_count(arr);
-		for (size_t i = 0; i < count; i++) {
-			OBSDataAutoRelease obj = obs_data_array_item(arr, i);
-			const char *uuid = obs_data_get_string(obj, "uuid");
-			if (!uuid || !*uuid)
-				uuid = obs_data_get_string(obj, "main_uuid");
-			obs_data_t *sourceData = obs_data_get_obj(obj, "source");
-			if (!sourceData)
-				continue;
-			obs_source_t *src = obs_load_source(sourceData);
-			obs_data_release(sourceData);
-			if (!src)
-				continue;
-			obs_scene_t *loaded = obs_scene_from_source(src);
-			if (loaded) {
-				if (canvas)
-					obs_canvas_move_scene(loaded, canvas);
-				const char *realUuid = obs_source_get_uuid(src);
-				const QString key = realUuid && *realUuid ? QString::fromUtf8(realUuid)
-									  : QString::fromUtf8(uuid ? uuid : "");
-				if (!key.isEmpty()) {
-					verticalScenes.insert(key, loaded);
-					sceneOrder.append(key);
-				}
-			}
-			obs_source_release(src);
-		}
-		obs_data_array_release(arr);
-	}
 
 	const char *trName = obs_data_get_string(data, "vertical_transition");
 	if (trName && *trName)
@@ -2122,13 +2032,12 @@ void ShortsDock::LoadSettings(obs_data_t *data)
 		outputs->ApplySettings(settings);
 
 	loadingSettings = false;
+	EnsureHostScene();
+	SyncHostFromMainScene(true);
 	RefreshVerticalWorkspace(true);
 	if (automation)
 		automation->ApplySettings(settings);
 
-	const char *active = obs_data_get_string(data, "active_vertical_scene");
-	if (active && *active)
-		RequestSelectScene(QString::fromUtf8(active));
 	EmitSceneUiChanged();
 	emit verticalTransitionsChanged();
 	SyncCanvasPresetControl();
@@ -2146,13 +2055,19 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 		QMetaObject::invokeMethod(dock, [dock]() {
 			if (dock->automation)
 				dock->automation->OnObsFinishedLoading();
-			/* Video system is fully up — refresh canvas mix + PROGRAM channel
-			 * so capture devices activate on the Vertical Shorts path. */
 			dock->RefreshVerticalWorkspace(true);
+			dock->SyncHostFromMainScene(true);
 			dock->EnsureBufferIfConfigured();
 			dock->EmitSceneUiChanged();
 			emit dock->verticalTransitionsChanged();
 			dock->LogRenderPipeline("FINISHED_LOADING");
+		}, Qt::QueuedConnection);
+		break;
+	case OBS_FRONTEND_EVENT_SCENE_CHANGED:
+	case OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED:
+		QMetaObject::invokeMethod(dock, [dock]() {
+			dock->SyncHostFromMainScene(false);
+			dock->EmitSceneUiChanged();
 		}, Qt::QueuedConnection);
 		break;
 	case OBS_FRONTEND_EVENT_EXIT:
@@ -2181,7 +2096,14 @@ void ShortsDock::FrontendEvent(enum obs_frontend_event event, void *private_data
 		break;
 	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
 	case OBS_FRONTEND_EVENT_PROFILE_CHANGED:
-		QMetaObject::invokeMethod(dock, [dock]() { dock->EmitSourceUiChanged(); }, Qt::QueuedConnection);
+		QMetaObject::invokeMethod(dock, [dock]() {
+			dock->SyncHostFromMainScene(true);
+			dock->EmitSceneUiChanged();
+			dock->EmitSourceUiChanged();
+		}, Qt::QueuedConnection);
+		break;
+	case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
+		QMetaObject::invokeMethod(dock, [dock]() { dock->EmitSceneUiChanged(); }, Qt::QueuedConnection);
 		break;
 	default:
 		break;
