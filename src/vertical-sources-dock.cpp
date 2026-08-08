@@ -293,11 +293,7 @@ void VerticalSourcesDock::ShowSourceContextMenu(const QPoint &globalPos)
 	pasteTf->setEnabled(workspace->HasTransformClipboard());
 	transformMenu->addAction(Translate("ResetTransform"), workspace, &ShortsDock::RequestResetTransform);
 	transformMenu->addSeparator();
-	transformMenu->addAction(Translate("FitToVerticalCanvas"), workspace, &ShortsDock::RequestFitToScreen);
-	transformMenu->addAction(Translate("StretchToVerticalCanvas"), workspace, &ShortsDock::RequestStretchToScreen);
-	transformMenu->addAction(Translate("CenterToVerticalCanvas"), workspace, &ShortsDock::RequestCenterToScreen);
-	transformMenu->addAction(Translate("CenterHorizontally"), workspace, &ShortsDock::RequestCenterHorizontally);
-	transformMenu->addAction(Translate("CenterVertically"), workspace, &ShortsDock::RequestCenterVertically);
+	workspace->AppendTransformFitMenu(transformMenu);
 	transformMenu->addSeparator();
 	transformMenu->addAction(Translate("Rotate90CW"), workspace, [this]() {
 		if (workspace)

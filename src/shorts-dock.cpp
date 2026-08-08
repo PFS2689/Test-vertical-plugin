@@ -1289,24 +1289,208 @@ void ShortsDock::ShowAddSourceMenu(QWidget *button)
 	menu.exec(pos);
 }
 
-void ShortsDock::FitSceneItemToCanvas(obs_sceneitem_t *item)
+bool ShortsDock::SourceIsVisual(obs_source_t *source)
+{
+	if (!source)
+		return false;
+	const uint32_t flags = obs_source_get_output_flags(source);
+	return (flags & OBS_SOURCE_VIDEO) != 0;
+}
+
+uint32_t ShortsDock::FillBoundsAlignment(VerticalFillPosition pos)
+{
+	switch (pos) {
+	case VerticalFillPosition::Left:
+		return OBS_ALIGN_LEFT | OBS_ALIGN_CENTER;
+	case VerticalFillPosition::Right:
+		return OBS_ALIGN_RIGHT | OBS_ALIGN_CENTER;
+	case VerticalFillPosition::Center:
+	default:
+		return OBS_ALIGN_CENTER;
+	}
+}
+
+void ShortsDock::StoreFitMode(obs_sceneitem_t *item, VerticalFitMode mode)
+{
+	if (!item)
+		return;
+	/* Borrowed pointer — do not release. */
+	obs_data_t *priv = obs_sceneitem_get_private_settings(item);
+	if (!priv)
+		return;
+	const char *value = "fill";
+	switch (mode) {
+	case VerticalFitMode::FitInside:
+		value = "fit";
+		break;
+	case VerticalFitMode::Original:
+		value = "original";
+		break;
+	case VerticalFitMode::Stretch:
+		value = "stretch";
+		break;
+	case VerticalFitMode::Fill:
+	default:
+		value = "fill";
+		break;
+	}
+	obs_data_set_string(priv, "vsp_fit_mode", value);
+}
+
+void ShortsDock::StoreFillPosition(obs_sceneitem_t *item, VerticalFillPosition pos)
+{
+	if (!item)
+		return;
+	obs_data_t *priv = obs_sceneitem_get_private_settings(item);
+	if (!priv)
+		return;
+	const char *value = "center";
+	switch (pos) {
+	case VerticalFillPosition::Left:
+		value = "left";
+		break;
+	case VerticalFillPosition::Right:
+		value = "right";
+		break;
+	case VerticalFillPosition::Center:
+	default:
+		value = "center";
+		break;
+	}
+	obs_data_set_string(priv, "vsp_fill_pos", value);
+}
+
+VerticalFitMode ShortsDock::LoadFitMode(obs_sceneitem_t *item, VerticalFitMode fallback)
+{
+	if (!item)
+		return fallback;
+	obs_data_t *priv = obs_sceneitem_get_private_settings(item);
+	if (!priv)
+		return fallback;
+	const char *value = obs_data_get_string(priv, "vsp_fit_mode");
+	if (!value || !*value)
+		return fallback;
+	if (strcmp(value, "fit") == 0)
+		return VerticalFitMode::FitInside;
+	if (strcmp(value, "original") == 0)
+		return VerticalFitMode::Original;
+	if (strcmp(value, "stretch") == 0)
+		return VerticalFitMode::Stretch;
+	if (strcmp(value, "fill") == 0)
+		return VerticalFitMode::Fill;
+	return fallback;
+}
+
+VerticalFillPosition ShortsDock::LoadFillPosition(obs_sceneitem_t *item)
+{
+	if (!item)
+		return VerticalFillPosition::Center;
+	obs_data_t *priv = obs_sceneitem_get_private_settings(item);
+	if (!priv)
+		return VerticalFillPosition::Center;
+	const char *value = obs_data_get_string(priv, "vsp_fill_pos");
+	if (value && strcmp(value, "left") == 0)
+		return VerticalFillPosition::Left;
+	if (value && strcmp(value, "right") == 0)
+		return VerticalFillPosition::Right;
+	return VerticalFillPosition::Center;
+}
+
+void ShortsDock::ApplyVerticalFitMode(obs_sceneitem_t *item, VerticalFitMode mode, bool persist)
 {
 	if (!item)
 		return;
 
-	/* OBS Fit-to-Screen path: bounds SCALE_INNER centered on the vertical canvas.
-	 * Works for absolute and relative scene coordinates without distorting. */
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	const uint32_t sw = source ? obs_source_get_width(source) : 0;
+	const uint32_t sh = source ? obs_source_get_height(source) : 0;
+	const float canvasW = float(verticalWidth > 0 ? verticalWidth : 1080);
+	const float canvasH = float(verticalHeight > 0 ? verticalHeight : 1920);
+	const VerticalFillPosition fillPos = LoadFillPosition(item);
+
+	if (persist)
+		StoreFitMode(item, mode);
+
+	/* Clear manual crop — Fill/Fit use bounds cropping, not scene-item crop. */
+	obs_sceneitem_crop zeroCrop = {0, 0, 0, 0};
+	obs_sceneitem_set_crop(item, &zeroCrop);
+
 	obs_transform_info info{};
 	obs_sceneitem_get_info2(item, &info);
-	vec2_set(&info.pos, 0.0f, 0.0f);
-	vec2_set(&info.scale, 1.0f, 1.0f);
-	info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
 	info.rot = 0.0f;
-	vec2_set(&info.bounds, float(verticalWidth), float(verticalHeight));
-	info.bounds_type = OBS_BOUNDS_SCALE_INNER;
-	info.bounds_alignment = OBS_ALIGN_CENTER;
-	info.crop_to_bounds = obs_sceneitem_get_bounds_crop(item);
+	vec2_set(&info.scale, 1.0f, 1.0f);
+
+	switch (mode) {
+	case VerticalFitMode::Fill:
+		/* Cover the vertical canvas, preserve AR, crop overflow (no stretch). */
+		vec2_set(&info.pos, 0.0f, 0.0f);
+		info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+		vec2_set(&info.bounds, canvasW, canvasH);
+		info.bounds_type = OBS_BOUNDS_SCALE_OUTER;
+		info.bounds_alignment = FillBoundsAlignment(fillPos);
+		info.crop_to_bounds = true;
+		break;
+	case VerticalFitMode::FitInside:
+		/* Entire source visible; may letterbox. */
+		vec2_set(&info.pos, 0.0f, 0.0f);
+		info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+		vec2_set(&info.bounds, canvasW, canvasH);
+		info.bounds_type = OBS_BOUNDS_SCALE_INNER;
+		info.bounds_alignment = OBS_ALIGN_CENTER;
+		info.crop_to_bounds = false;
+		break;
+	case VerticalFitMode::Original:
+		vec2_set(&info.bounds, 0.0f, 0.0f);
+		info.bounds_type = OBS_BOUNDS_NONE;
+		info.bounds_alignment = OBS_ALIGN_CENTER;
+		info.crop_to_bounds = false;
+		info.alignment = OBS_ALIGN_CENTER;
+		vec2_set(&info.pos, canvasW * 0.5f, canvasH * 0.5f);
+		break;
+	case VerticalFitMode::Stretch:
+		/* Manual-only distorting fill. Never used as automatic default. */
+		vec2_set(&info.pos, 0.0f, 0.0f);
+		info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
+		vec2_set(&info.bounds, canvasW, canvasH);
+		info.bounds_type = OBS_BOUNDS_STRETCH;
+		info.bounds_alignment = OBS_ALIGN_CENTER;
+		info.crop_to_bounds = false;
+		break;
+	}
+
 	obs_sceneitem_set_info2(item, &info);
+
+	blog(LOG_INFO,
+	     "[obs-shorts-vertical] Applied fit mode=%d fill_pos=%d to '%s' source=%ux%u canvas=%ux%u "
+	     "bounds_type=%d crop_to_bounds=%d",
+	     (int)mode, (int)fillPos, source ? obs_source_get_name(source) : "?", sw, sh, (uint32_t)canvasW,
+	     (uint32_t)canvasH, (int)info.bounds_type, (int)info.crop_to_bounds);
+}
+
+void ShortsDock::FitSceneItemToCanvas(obs_sceneitem_t *item)
+{
+	/* Default for cameras/video: Fill Vertical Canvas (cover + preserve AR). */
+	ApplyVerticalFitMode(item, VerticalFitMode::Fill, true);
+}
+
+void ShortsDock::ReapplyStoredFitModes()
+{
+	if (!scene)
+		return;
+
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
+			auto *self = static_cast<ShortsDock *>(param);
+			obs_source_t *source = obs_sceneitem_get_source(item);
+			if (!SourceIsVisual(source))
+				return true;
+			/* Preserve stored mode (Fill/Fit/Original/Stretch) against the new canvas. */
+			const VerticalFitMode mode = LoadFitMode(item, VerticalFitMode::Fill);
+			self->ApplyVerticalFitMode(item, mode, false);
+			return true;
+		},
+		this);
 }
 
 void ShortsDock::ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft)
@@ -1323,7 +1507,8 @@ void ShortsDock::ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft)
 		const uint32_t sw = src ? obs_source_get_width(src) : 0;
 		const uint32_t sh = src ? obs_source_get_height(src) : 0;
 		if (sw > 0 && sh > 0) {
-			FitSceneItemToCanvas(held);
+			const VerticalFitMode mode = LoadFitMode(held, VerticalFitMode::Fill);
+			ApplyVerticalFitMode(held, mode, true);
 			EnsureCanvasProgramChannel(false);
 			LogRenderPipeline("DeferredFit");
 			emit verticalTransformChanged();
@@ -1355,9 +1540,12 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 
 	const uint32_t sw = obs_source_get_width(source);
 	const uint32_t sh = obs_source_get_height(source);
-	if (fitIfSized) {
+	const bool visual = SourceIsVisual(source);
+	if (fitIfSized && visual) {
+		StoreFillPosition(item, VerticalFillPosition::Center);
+		StoreFitMode(item, VerticalFitMode::Fill);
 		if (sw > 0 && sh > 0)
-			FitSceneItemToCanvas(item);
+			ApplyVerticalFitMode(item, VerticalFitMode::Fill, true);
 		else
 			ScheduleDeferredFit(item, 40); /* ~8s for devices that start late */
 	}
@@ -1368,10 +1556,10 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 
 	blog(LOG_INFO,
 	     "[obs-shorts-vertical] Added '%s' (%s) shared_source=%p to vertical scene: item_visible=%d "
-	     "source_active=%d source_showing=%d source_enabled=%d size=%ux%u canvas=%p video=%p",
+	     "source_active=%d source_showing=%d source_enabled=%d size=%ux%u canvas=%ux%u fit=Fill",
 	     obs_source_get_name(source), obs_source_get_id(source), (void *)source, (int)obs_sceneitem_visible(item),
 	     (int)obs_source_active(source), (int)obs_source_showing(source), (int)obs_source_enabled(source), sw, sh,
-	     (void *)canvas, (void *)video);
+	     verticalWidth, verticalHeight);
 	LogRenderPipeline("AddSourceToActiveScene");
 
 	return item;
@@ -1684,13 +1872,43 @@ bool ShortsDock::HasTransformClipboard() const
 
 void ShortsDock::RequestFitToScreen()
 {
+	/* Legacy name — now means Fit Inside (show entire source). */
+	RequestFitInsideVerticalCanvas();
+}
+
+void ShortsDock::RequestFillVerticalCanvas()
+{
 	if (!scene)
 		return;
 	std::vector<obs_sceneitem_t *> selected;
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-	FitSceneItemToCanvas(selected.front());
+	ApplyVerticalFitMode(selected.front(), VerticalFitMode::Fill, true);
+	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestFitInsideVerticalCanvas()
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	ApplyVerticalFitMode(selected.front(), VerticalFitMode::FitInside, true);
+	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestOriginalSize()
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	ApplyVerticalFitMode(selected.front(), VerticalFitMode::Original, true);
 	emit verticalTransformChanged();
 }
 
@@ -1702,19 +1920,82 @@ void ShortsDock::RequestStretchToScreen()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
-	obs_sceneitem_t *item = selected.front();
-	obs_transform_info info{};
-	obs_sceneitem_get_info2(item, &info);
-	vec2_set(&info.pos, 0.0f, 0.0f);
-	vec2_set(&info.scale, 1.0f, 1.0f);
-	info.alignment = OBS_ALIGN_LEFT | OBS_ALIGN_TOP;
-	info.rot = 0.0f;
-	vec2_set(&info.bounds, float(verticalWidth), float(verticalHeight));
-	info.bounds_type = OBS_BOUNDS_STRETCH;
-	info.bounds_alignment = OBS_ALIGN_CENTER;
-	info.crop_to_bounds = obs_sceneitem_get_bounds_crop(item);
-	obs_sceneitem_set_info2(item, &info);
+	ApplyVerticalFitMode(selected.front(), VerticalFitMode::Stretch, true);
 	emit verticalTransformChanged();
+}
+
+void ShortsDock::RequestSetFillPosition(VerticalFillPosition pos)
+{
+	if (!scene)
+		return;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return;
+	obs_sceneitem_t *item = selected.front();
+	StoreFillPosition(item, pos);
+	/* Fill Position applies to Fill mode (cover + crop). Selecting a side enables Fill. */
+	ApplyVerticalFitMode(item, VerticalFitMode::Fill, true);
+	emit verticalTransformChanged();
+}
+
+VerticalFitMode ShortsDock::SelectedFitMode() const
+{
+	if (!scene)
+		return VerticalFitMode::Fill;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return VerticalFitMode::Fill;
+	return LoadFitMode(selected.front(), VerticalFitMode::Fill);
+}
+
+VerticalFillPosition ShortsDock::SelectedFillPosition() const
+{
+	if (!scene)
+		return VerticalFillPosition::Center;
+	std::vector<obs_sceneitem_t *> selected;
+	obs_scene_enum_items(scene, CollectSelected, &selected);
+	if (selected.empty())
+		return VerticalFillPosition::Center;
+	return LoadFillPosition(selected.front());
+}
+
+void ShortsDock::AppendTransformFitMenu(QMenu *transformMenu)
+{
+	if (!transformMenu)
+		return;
+
+	const VerticalFitMode curMode = SelectedFitMode();
+	const VerticalFillPosition curPos = SelectedFillPosition();
+
+	auto addMode = [&](const char *key, VerticalFitMode mode, void (ShortsDock::*slot)()) {
+		QAction *act = transformMenu->addAction(Translate(key), this, slot);
+		act->setCheckable(true);
+		act->setChecked(curMode == mode);
+		return act;
+	};
+	addMode("FillVerticalCanvas", VerticalFitMode::Fill, &ShortsDock::RequestFillVerticalCanvas);
+	addMode("FitInsideVerticalCanvas", VerticalFitMode::FitInside, &ShortsDock::RequestFitInsideVerticalCanvas);
+	addMode("OriginalSize", VerticalFitMode::Original, &ShortsDock::RequestOriginalSize);
+	addMode("StretchToVerticalCanvas", VerticalFitMode::Stretch, &ShortsDock::RequestStretchToScreen);
+
+	transformMenu->addSeparator();
+	QMenu *fillPosMenu = transformMenu->addMenu(Translate("VerticalFillPosition"));
+	auto addPos = [&](const char *key, VerticalFillPosition pos) {
+		QAction *act = fillPosMenu->addAction(Translate(key));
+		act->setCheckable(true);
+		act->setChecked(curPos == pos);
+		connect(act, &QAction::triggered, this, [this, pos]() { RequestSetFillPosition(pos); });
+	};
+	addPos("FillPositionLeft", VerticalFillPosition::Left);
+	addPos("FillPositionCenter", VerticalFillPosition::Center);
+	addPos("FillPositionRight", VerticalFillPosition::Right);
+
+	transformMenu->addSeparator();
+	transformMenu->addAction(Translate("CenterToVerticalCanvas"), this, &ShortsDock::RequestCenterToScreen);
+	transformMenu->addAction(Translate("CenterHorizontally"), this, &ShortsDock::RequestCenterHorizontally);
+	transformMenu->addAction(Translate("CenterVertically"), this, &ShortsDock::RequestCenterVertically);
 }
 
 void ShortsDock::RequestCenterToScreen()
@@ -1827,7 +2108,10 @@ void ShortsDock::RequestResetTransform()
 	obs_scene_enum_items(scene, CollectSelected, &selected);
 	if (selected.empty())
 		return;
+	/* Reset to native size at top-left; remember as Original for canvas preset changes. */
 	obs_sceneitem_t *item = selected.front();
+	StoreFitMode(item, VerticalFitMode::Original);
+	StoreFillPosition(item, VerticalFillPosition::Center);
 	obs_transform_info info{};
 	obs_sceneitem_get_info2(item, &info);
 	vec2_set(&info.pos, 0.0f, 0.0f);
@@ -2386,6 +2670,9 @@ void ShortsDock::ApplyCanvasPresetChange()
 			outputs->SetVideo(video);
 		if (canvas && scene)
 			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+		/* Preserve each item's fit mode; recalculate against the new canvas size. */
+		ReapplyStoredFitModes();
+		emit verticalTransformChanged();
 	}
 
 	obs_frontend_save();
@@ -2475,6 +2762,8 @@ void ShortsDock::OpenSettingsStreaming(bool focusStreaming)
 			outputs->SetVideo(video);
 		if (canvas && scene)
 			obs_canvas_set_channel(canvas, 0, obs_scene_get_source(scene));
+		ReapplyStoredFitModes();
+		emit verticalTransformChanged();
 	}
 
 	if (restartBuffer && outputs && outputs->IsClipBufferActive()) {
@@ -3049,11 +3338,7 @@ void ShortsDock::ShowContextMenu(const QPoint &globalPos)
 	pasteTf->setEnabled(has && HasTransformClipboard());
 	transformMenu->addAction(Translate("ResetTransform"), this, &ShortsDock::RequestResetTransform);
 	transformMenu->addSeparator();
-	transformMenu->addAction(Translate("FitToVerticalCanvas"), this, &ShortsDock::RequestFitToScreen);
-	transformMenu->addAction(Translate("StretchToVerticalCanvas"), this, &ShortsDock::RequestStretchToScreen);
-	transformMenu->addAction(Translate("CenterToVerticalCanvas"), this, &ShortsDock::RequestCenterToScreen);
-	transformMenu->addAction(Translate("CenterHorizontally"), this, &ShortsDock::RequestCenterHorizontally);
-	transformMenu->addAction(Translate("CenterVertically"), this, &ShortsDock::RequestCenterVertically);
+	AppendTransformFitMenu(transformMenu);
 	transformMenu->addSeparator();
 	transformMenu->addAction(Translate("Rotate90CW"), this, [this]() { RequestRotateDegrees(90.0f); });
 	transformMenu->addAction(Translate("Rotate90CCW"), this, [this]() { RequestRotateDegrees(-90.0f); });

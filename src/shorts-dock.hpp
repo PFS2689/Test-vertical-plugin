@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMap>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
@@ -44,6 +45,20 @@ enum class ItemHandle : uint32_t {
 	BottomLeft = ITEM_BOTTOM | ITEM_LEFT,
 	BottomCenter = ITEM_BOTTOM,
 	BottomRight = ITEM_BOTTOM | ITEM_RIGHT,
+};
+
+/* Vertical scene-item fit modes (independent from main OBS transforms). */
+enum class VerticalFitMode {
+	Fill = 0,     /* cover canvas, preserve AR, crop excess (default for cameras) */
+	FitInside = 1, /* entire source visible, preserve AR, may letterbox */
+	Original = 2,  /* native source size, centered */
+	Stretch = 3,   /* fill canvas, may distort AR (manual only) */
+};
+
+enum class VerticalFillPosition {
+	Left = 0,
+	Center = 1,
+	Right = 2,
 };
 
 using EventFilterFunc = std::function<bool(QObject *, QEvent *)>;
@@ -101,8 +116,12 @@ public:
 	void RequestSelectSource(qint64 itemId);
 	void PopulateSourcesList(QListWidget *list);
 
-	void RequestFitToScreen();
+	void RequestFitToScreen(); /* Fit Inside Vertical Canvas (legacy name) */
+	void RequestFillVerticalCanvas();
+	void RequestFitInsideVerticalCanvas();
+	void RequestOriginalSize();
 	void RequestStretchToScreen();
+	void RequestSetFillPosition(VerticalFillPosition pos);
 	void RequestCenterToScreen();
 	void RequestCenterHorizontally();
 	void RequestCenterVertically();
@@ -115,9 +134,12 @@ public:
 	void RequestTransformEdited(double x, double y, double w, double h, double rot);
 	void PopulateTransformControls(QDoubleSpinBox *x, QDoubleSpinBox *y, QDoubleSpinBox *w, QDoubleSpinBox *h,
 				       QDoubleSpinBox *rot);
+	void AppendTransformFitMenu(QMenu *transformMenu);
 	bool HasSelectedVerticalSource() const;
 	bool HasSourceClipboard() const;
 	bool HasTransformClipboard() const;
+	VerticalFitMode SelectedFitMode() const;
+	VerticalFillPosition SelectedFillPosition() const;
 	uint32_t VerticalCanvasWidth() const { return verticalWidth; }
 	uint32_t VerticalCanvasHeight() const { return verticalHeight; }
 
@@ -181,8 +203,16 @@ private:
 	/* Keep PROGRAM channel 0 bound to the active vertical scene (activation path). */
 	void EnsureCanvasProgramChannel(bool forceRebind = false);
 	void LogRenderPipeline(const char *reason);
-	void FitSceneItemToCanvas(obs_sceneitem_t *item);
+	void FitSceneItemToCanvas(obs_sceneitem_t *item); /* default Fill */
+	void ApplyVerticalFitMode(obs_sceneitem_t *item, VerticalFitMode mode, bool persist = true);
+	void ReapplyStoredFitModes();
 	void ScheduleDeferredFit(obs_sceneitem_t *item, int attemptsLeft);
+	static void StoreFitMode(obs_sceneitem_t *item, VerticalFitMode mode);
+	static void StoreFillPosition(obs_sceneitem_t *item, VerticalFillPosition pos);
+	static VerticalFitMode LoadFitMode(obs_sceneitem_t *item, VerticalFitMode fallback = VerticalFitMode::Fill);
+	static VerticalFillPosition LoadFillPosition(obs_sceneitem_t *item);
+	static bool SourceIsVisual(obs_source_t *source);
+	static uint32_t FillBoundsAlignment(VerticalFillPosition pos);
 	obs_scene_t *FindVerticalSceneByUuid(const QString &uuid) const;
 	QString ActiveSceneUuid() const;
 	void HandleClipSaveResult(const ClipSaveInfo &info, ClipKind kind);

@@ -18,7 +18,7 @@ Native OBS docks (View → Docks):
 
 - **Vertical Shorts** — vertical canvas + emoji controls (🟢 ⏺️ 📸 📷 ⚙️) + Preset row
 - **Vertical Production** — Vertical Scenes, Sources, Transitions, and transition duration
-  - **Vertical Sources** matches the OBS Sources pattern: only **+** / **−** on the button row; Properties, Filters, Transform, Rename, Duplicate, Copy/Paste, Lock, Show/Hide, Order, and Remove are on the right-click menu; double-click opens Properties; drag to reorder. Add Source supports Create New, Add Existing, and Add Existing Scene. Vertical scene-item transforms stay independent from main OBS scene items; shared sources reuse the same OBS source (Properties may affect every scene using that source).
+  - **Vertical Sources** matches the OBS Sources pattern: only **+** / **−** on the button row; Properties, Filters, Transform, Rename, Duplicate, Copy/Paste, Lock, Show/Hide, Order, and Remove are on the right-click menu; double-click opens Properties; drag to reorder. Add Source supports Create New, Add Existing, and Add Existing Scene. New cameras/video default to **Fill Vertical Canvas** (aspect-preserving cover + center crop, never auto-stretch). Vertical scene-item transforms stay independent from main OBS scene items; shared sources reuse the same OBS source (Properties may affect every scene using that source).
 
 Settings uses categories on the left and pages on the right (OK / Cancel / Apply) with General, Vertical Canvas, Vertical Recording, Vertical Clips, Recording Automation, Vertical Streaming, Audio, and About.
 
