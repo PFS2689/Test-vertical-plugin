@@ -73,6 +73,56 @@ std::string ResolveLatestInputTypeId(const char *idOrUnversioned)
 	return idOrUnversioned;
 }
 
+std::string ResolveVideoCaptureSourceId()
+{
+	size_t idx = 0;
+	const char *typeId = nullptr;
+	const char *unversioned = nullptr;
+	std::string preferred;
+	std::string fallback;
+
+	while (obs_enum_input_types2(idx++, &typeId, &unversioned)) {
+		if (!typeId || !*typeId)
+			continue;
+		const char *stable = (unversioned && *unversioned) ? unversioned : typeId;
+		const std::string latest = ResolveLatestInputTypeId(stable);
+		const char *id = !latest.empty() ? latest.c_str() : typeId;
+		const char *display = obs_source_get_display_name(id);
+		const uint32_t flags = obs_get_source_output_flags(id);
+
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] Enum input type: id=%s unversioned=%s display='%s' "
+		     "flags=0x%x video=%d async=%d audio=%d",
+		     id, stable, display ? display : "", flags, (flags & OBS_SOURCE_VIDEO) ? 1 : 0,
+		     (flags & OBS_SOURCE_ASYNC) ? 1 : 0, (flags & OBS_SOURCE_AUDIO) ? 1 : 0);
+
+		const bool byId = IsVideoCaptureSourceId(id) || IsVideoCaptureSourceId(stable);
+		const bool byCaps = (flags & OBS_SOURCE_VIDEO) && (flags & OBS_SOURCE_ASYNC) &&
+				    (flags & OBS_SOURCE_DO_NOT_DUPLICATE);
+		if (!byId && !byCaps)
+			continue;
+
+		if (ContainsInsensitive(id, "dshow") || ContainsInsensitive(stable, "dshow")) {
+			preferred = id;
+			blog(LOG_INFO,
+			     "[obs-shorts-vertical] Selected Windows Video Capture Device source id=%s display='%s'",
+			     id, display ? display : "");
+		} else if (fallback.empty() && byId) {
+			fallback = id;
+		}
+	}
+
+	if (!preferred.empty())
+		return preferred;
+	if (!fallback.empty()) {
+		blog(LOG_INFO, "[obs-shorts-vertical] Selected Video Capture Device source id=%s (non-dshow fallback)",
+		     fallback.c_str());
+		return fallback;
+	}
+	blog(LOG_ERROR, "[obs-shorts-vertical] No Video Capture Device source type registered in this OBS build");
+	return {};
+}
+
 std::string CaptureSourceFamily(const char *id)
 {
 	if (!id || !*id)

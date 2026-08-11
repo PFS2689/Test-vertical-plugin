@@ -27,6 +27,10 @@ bool IsVideoCaptureSourceId(const char *id);
 /* Resolve the create-time source id (latest versioned) for an unversioned or versioned id. */
 std::string ResolveLatestInputTypeId(const char *idOrUnversioned);
 
+/* Enumerate registered input types, log id/name/flags, and return the best Video Capture Device id
+ * for this OBS build (Windows: dshow_input). Empty if none found. */
+std::string ResolveVideoCaptureSourceId();
+
 /* Unversioned family: "dshow_input", "av_capture_input", "v4l2_input", … */
 std::string CaptureSourceFamily(const char *id);
 
