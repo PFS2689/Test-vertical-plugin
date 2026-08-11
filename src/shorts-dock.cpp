@@ -1578,15 +1578,16 @@ void ShortsDock::LogCameraSourceDiagnostics(const char *phase, obs_source_t *sou
 	const bool onScene = scene && vsp::VerticalSceneHasSource(scene, source);
 	const bool itemVisible = item ? obs_sceneitem_visible(item) : false;
 	const bool callbackSeesItems = drawCallbackCount > 0;
+	const bool independent = IsIndependentCapture(source);
 
 	blog(LOG_INFO,
 	     "[obs-shorts-vertical] Camera diag [%s]: id=%s name='%s' device_id='%s' device_name='%s' "
-	     "width=%u height=%u active=%d showing=%d enabled=%d flags=0x%x private=%d "
+	     "width=%u height=%u active=%d showing=%d enabled=%d flags=0x%x independent=%d "
 	     "added_to_vertical_scene=%d item_visible=%d render_callback_alive=%d draw_frames=%llu",
 	     phase ? phase : "?", id ? id : "(null)", name ? name : "(null)",
 	     deviceKey.c_str(), deviceName.c_str(), w, h, (int)obs_source_active(source),
 	     (int)obs_source_showing(source), (int)obs_source_enabled(source), flags,
-	     (int)obs_source_is_private(source), (int)onScene, (int)itemVisible, (int)callbackSeesItems,
+	     (int)independent, (int)onScene, (int)itemVisible, (int)callbackSeesItems,
 	     (unsigned long long)drawCallbackCount);
 
 	if (w == 0 || h == 0) {
@@ -1597,9 +1598,19 @@ void ShortsDock::LogCameraSourceDiagnostics(const char *phase, obs_source_t *sou
 	}
 }
 
+bool ShortsDock::IsIndependentCapture(obs_source_t *source) const
+{
+	if (!source)
+		return false;
+	const char *uuid = obs_source_get_uuid(source);
+	if (!uuid || !*uuid)
+		return false;
+	return independentCaptureUuids.contains(QString::fromUtf8(uuid));
+}
+
 void ShortsDock::MaybeDestroyPrivateCapture(obs_source_t *source)
 {
-	if (!source || !obs_source_is_private(source))
+	if (!source || !IsIndependentCapture(source))
 		return;
 	if (!vsp::IsVideoCaptureSourceId(obs_source_get_id(source)))
 		return;
@@ -1612,8 +1623,11 @@ void ShortsDock::MaybeDestroyPrivateCapture(obs_source_t *source)
 		if (s && vsp::VerticalSceneHasSource(s, source))
 			return;
 	}
-	blog(LOG_INFO, "[obs-shorts-vertical] Destroying private Vertical Shorts camera '%s' (no remaining items)",
+	const char *uuid = obs_source_get_uuid(source);
+	blog(LOG_INFO, "[obs-shorts-vertical] Destroying independent Vertical Shorts camera '%s' (no remaining items)",
 	     obs_source_get_name(source));
+	if (uuid && *uuid)
+		independentCaptureUuids.remove(QString::fromUtf8(uuid));
 	obs_source_remove(source);
 }
 
@@ -1731,6 +1745,11 @@ void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId,
 	}
 
 	LogCameraSourceDiagnostics("after_create", created, nullptr, false);
+	{
+		const char *uuid = obs_source_get_uuid(created);
+		if (uuid && *uuid)
+			independentCaptureUuids.insert(QString::fromUtf8(uuid));
+	}
 
 	obs_sceneitem_t *item = AddSourceToActiveScene(created, true);
 	if (!item) {
@@ -2326,6 +2345,11 @@ void ShortsDock::RequestPasteSource()
 	if (!created) {
 		QMessageBox::warning(this, Translate("PasteSource"), Translate("CreateSourceFailed"));
 		return;
+	}
+	if (isCapture) {
+		const char *uuid = obs_source_get_uuid(created);
+		if (uuid && *uuid)
+			independentCaptureUuids.insert(QString::fromUtf8(uuid));
 	}
 	AddSourceToActiveScene(created, true);
 	if (isCapture)

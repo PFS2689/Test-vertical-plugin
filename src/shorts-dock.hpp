@@ -22,6 +22,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QPushButton>
+#include <QSet>
 #include <QShowEvent>
 #include <QSpinBox>
 #include <QString>
@@ -251,6 +252,7 @@ private:
 	void RemoveVerticalItemsForSource(obs_source_t *source);
 	void NotifySharedCameraFeed();
 	void MaybeDestroyPrivateCapture(obs_source_t *source);
+	bool IsIndependentCapture(obs_source_t *source) const;
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -325,6 +327,9 @@ private:
 	bool loadingSettings = false;
 	bool shuttingDown = false;
 	bool sharedCameraNoticeShown = false;
+	/* UUIDs of Vertical Shorts–owned independent capture sources created this session
+	 * via obs_source_create_private (OBS 32.2.1 has no public obs_source_is_private). */
+	QSet<QString> independentCaptureUuids;
 	/* Config schema tracking (independent from PLUGIN_VERSION). */
 	int loadedConfigSchema = 0;
 	bool configSchemaTooNew = false;
