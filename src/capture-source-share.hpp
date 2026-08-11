@@ -5,9 +5,9 @@
 #include <string>
 #include <vector>
 
-/* Camera-sharing backend: match physical capture devices by stable IDs and
- * reuse the existing obs_source_t so Main OBS and Vertical Shorts share one
- * capture session while keeping independent scene-item transforms. */
+/* Capture device helpers: identify Video Capture Device sources by stable
+ * source IDs / device keys. Explicit Share Existing Camera may reuse a main
+ * OBS capture; Create New always builds an independent Vertical Shorts source. */
 
 namespace vsp {
 
@@ -24,12 +24,18 @@ struct CaptureSourceInfo {
 
 bool IsVideoCaptureSourceId(const char *id);
 
+/* Resolve the create-time source id (latest versioned) for an unversioned or versioned id. */
+std::string ResolveLatestInputTypeId(const char *idOrUnversioned);
+
 /* Unversioned family: "dshow_input", "av_capture_input", "v4l2_input", … */
 std::string CaptureSourceFamily(const char *id);
 
 /* Stable device key: "family|device_id". Empty if unknown / unset. */
 std::string GetCaptureDeviceKey(obs_source_t *source);
 std::string GetCaptureDeviceKeyFromSettings(const char *typeId, obs_data_t *settings);
+
+/* Human-readable device name from source settings (e.g. DirectShow video_device). */
+std::string GetCaptureDeviceDisplayName(obs_source_t *source);
 
 /* Strong-ref to an existing capture source with the same device key, excluding `exclude`. */
 obs_source_t *FindExistingCaptureByDeviceKey(const std::string &deviceKey, obs_source_t *exclude = nullptr);

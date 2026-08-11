@@ -53,13 +53,24 @@ bool IsVideoCaptureSourceId(const char *id)
 {
 	if (!id || !*id)
 		return false;
-	/* Exact common IDs first, then substring fallback for versioned plugins. */
+	/* Exact common IDs first, then substring fallback for versioned plugins.
+	 * Do not match by localized display name ("Video Capture Device"). */
 	if (strcmp(id, "dshow_input") == 0 || strcmp(id, "av_capture_input") == 0 ||
 	    strcmp(id, "v4l2_input") == 0 || strcmp(id, "dshow") == 0 || strcmp(id, "av_capture") == 0 ||
 	    strcmp(id, "v4l2") == 0)
 		return true;
 	return ContainsInsensitive(id, "dshow") || ContainsInsensitive(id, "av_capture") ||
 	       ContainsInsensitive(id, "v4l2");
+}
+
+std::string ResolveLatestInputTypeId(const char *idOrUnversioned)
+{
+	if (!idOrUnversioned || !*idOrUnversioned)
+		return {};
+	const char *latest = obs_get_latest_input_type_id(idOrUnversioned);
+	if (latest && *latest)
+		return latest;
+	return idOrUnversioned;
 }
 
 std::string CaptureSourceFamily(const char *id)
@@ -110,6 +121,27 @@ std::string GetCaptureDeviceKey(obs_source_t *source)
 		return {};
 	OBSDataAutoRelease settings = obs_source_get_settings(source);
 	return GetCaptureDeviceKeyFromSettings(id, settings);
+}
+
+std::string GetCaptureDeviceDisplayName(obs_source_t *source)
+{
+	if (!source)
+		return {};
+	const char *id = obs_source_get_id(source);
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	if (!settings)
+		return {};
+	const std::string family = CaptureSourceFamily(id);
+	const char *name = nullptr;
+	if (family == "dshow")
+		name = FirstNonEmptySetting(settings, {"video_device", "last_video_device"});
+	else if (family == "av_capture")
+		name = FirstNonEmptySetting(settings, {"device_name", "device", "uid"});
+	else if (family == "v4l2")
+		name = FirstNonEmptySetting(settings, {"device_id", "device"});
+	else
+		name = FirstNonEmptySetting(settings, {"video_device", "device_name", "device", "device_id"});
+	return name ? name : "";
 }
 
 obs_source_t *FindExistingCaptureByDeviceKey(const std::string &deviceKey, obs_source_t *exclude)

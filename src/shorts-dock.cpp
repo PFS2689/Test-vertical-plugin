@@ -32,6 +32,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -1352,76 +1353,63 @@ void ShortsDock::ShowAddSourceMenu(QWidget *button)
 			return;
 	}
 
+	/* Fresh menu every open — never append onto a previous instance. */
 	QMenu menu(button ? button : this);
 
-	/* --- Share Existing Camera (preferred path; one HW capture session) --- */
-	const std::vector<vsp::CaptureSourceInfo> captures = vsp::EnumerateCaptureSources();
-	QMenu *shareMenu = menu.addMenu(Translate("ShareExistingCamera"));
-	shareMenu->setToolTip(Translate("ShareExistingCameraTip"));
-	for (const vsp::CaptureSourceInfo &cap : captures) {
-		const QString name = QString::fromStdString(cap.displayName);
-		const QString typeName = QString::fromUtf8(obs_source_get_display_name(cap.typeId.c_str()));
-		QString label = typeName.isEmpty() ? name : QStringLiteral("%1 (%2)").arg(name, typeName);
-		if (cap.width > 0 && cap.height > 0)
-			label += QStringLiteral("  [%1×%2]").arg(cap.width).arg(cap.height);
-		else if (!cap.deviceKey.empty())
-			label += QStringLiteral("  [device]");
-		QAction *act = shareMenu->addAction(label);
-		OBSSource held = cap.source;
-		connect(act, &QAction::triggered, this, [this, held]() {
-			if (!scene || !held)
-				return;
-			if (vsp::VerticalSceneHasSource(scene, held)) {
-				QMessageBox::information(this, Translate("AddSource"),
-							 Translate("SharedCameraAlreadyAdded"));
-				return;
-			}
-			AddSourceToActiveScene(held, true);
-			NotifySharedCameraFeed();
-			EmitSourceUiChanged();
-		});
-	}
-	if (captures.empty())
-		shareMenu->setEnabled(false);
-	menu.addSeparator();
-
-	/* --- Create New --- */
+	/* --- Create New (dedupe by stable unversioned source ID) --- */
 	QMenu *createMenu = menu.addMenu(Translate("CreateNewSource"));
 	size_t idx = 0;
 	const char *typeId = nullptr;
 	const char *unversioned = nullptr;
 	struct TypeEntry {
 		QString label;
-		std::string id;
+		std::string unversionedId; /* primary key for menu dedupe */
 	};
 	std::vector<TypeEntry> types;
+	QSet<QString> seenUnversioned;
 	while (obs_enum_input_types2(idx++, &typeId, &unversioned)) {
 		if (!typeId || !*typeId)
 			continue;
 		if (strcmp(typeId, "scene") == 0 || strcmp(typeId, "group") == 0)
 			continue;
-		const char *display = obs_source_get_display_name(typeId);
+		const char *stable = (unversioned && *unversioned) ? unversioned : typeId;
+		const QString key = QString::fromUtf8(stable);
+		if (seenUnversioned.contains(key))
+			continue;
+		seenUnversioned.insert(key);
+		/* Prefer display name of the latest versioned implementation. */
+		const std::string latestId = vsp::ResolveLatestInputTypeId(stable);
+		const char *display = obs_source_get_display_name(latestId.c_str());
+		if (!display || !*display)
+			display = obs_source_get_display_name(typeId);
 		if (!display || !*display)
 			continue;
-		types.push_back({QString::fromUtf8(display), typeId});
+		types.push_back({QString::fromUtf8(display), stable});
 	}
 	std::sort(types.begin(), types.end(),
 		  [](const TypeEntry &a, const TypeEntry &b) { return a.label.localeAwareCompare(b.label) < 0; });
+	blog(LOG_INFO, "[obs-shorts-vertical] Add Source menu: %zu unique input types (deduped by unversioned id)",
+	     types.size());
 	for (const TypeEntry &t : types) {
 		QAction *act = createMenu->addAction(t.label);
-		const std::string idCopy = t.id;
+		const std::string unversionedCopy = t.unversionedId;
 		const QString labelCopy = t.label;
-		connect(act, &QAction::triggered, this, [this, idCopy, labelCopy]() {
+		connect(act, &QAction::triggered, this, [this, unversionedCopy, labelCopy]() {
 			if (!scene)
 				return;
-			if (vsp::IsVideoCaptureSourceId(idCopy.c_str())) {
-				CreateOrShareCaptureSource(idCopy, labelCopy);
+			const std::string createId = vsp::ResolveLatestInputTypeId(unversionedCopy.c_str());
+			if (vsp::IsVideoCaptureSourceId(unversionedCopy.c_str()) ||
+			    vsp::IsVideoCaptureSourceId(createId.c_str())) {
+				CreateIndependentVideoCapture(unversionedCopy, labelCopy);
 				return;
 			}
 			const QString name = UniqueSourceName(labelCopy);
 			obs_source_t *created =
-				obs_source_create(idCopy.c_str(), name.toUtf8().constData(), nullptr, nullptr);
+				obs_source_create(createId.c_str(), name.toUtf8().constData(), nullptr, nullptr);
 			if (!created) {
+				blog(LOG_ERROR,
+				     "[obs-shorts-vertical] obs_source_create failed for id='%s' (unversioned='%s')",
+				     createId.c_str(), unversionedCopy.c_str());
 				QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
 				return;
 			}
@@ -1435,7 +1423,7 @@ void ShortsDock::ShowAddSourceMenu(QWidget *button)
 	if (types.empty())
 		createMenu->setEnabled(false);
 
-	/* --- Add Existing Source (shared reference; independent vertical transform) --- */
+	/* --- Add Existing Source (explicit reference; independent vertical transform) --- */
 	QMenu *existingMenu = menu.addMenu(Translate("AddExistingSource"));
 	existingMenu->setToolTip(Translate("SelectSource"));
 	std::vector<OBSSource> existingSources;
@@ -1459,8 +1447,6 @@ void ShortsDock::ShowAddSourceMenu(QWidget *button)
 		const QString name = QString::fromUtf8(obs_source_get_name(src));
 		const QString typeName = QString::fromUtf8(obs_source_get_display_name(obs_source_get_id(src)));
 		QString label = typeName.isEmpty() ? name : QStringLiteral("%1 (%2)").arg(name, typeName);
-		if (vsp::IsVideoCaptureSourceId(obs_source_get_id(src)))
-			label += QStringLiteral(" [share]");
 		QAction *act = existingMenu->addAction(label);
 		connect(act, &QAction::triggered, this, [this, src]() {
 			if (vsp::IsVideoCaptureSourceId(obs_source_get_id(src)) &&
@@ -1499,6 +1485,38 @@ void ShortsDock::ShowAddSourceMenu(QWidget *button)
 	if (sceneMenu->actions().isEmpty())
 		sceneMenu->setEnabled(false);
 
+	menu.addSeparator();
+
+	/* --- Share Existing Camera (explicit opt-in only; never silent) --- */
+	const std::vector<vsp::CaptureSourceInfo> captures = vsp::EnumerateCaptureSources();
+	QMenu *shareMenu = menu.addMenu(Translate("ShareExistingCamera"));
+	shareMenu->setToolTip(Translate("ShareExistingCameraTip"));
+	for (const vsp::CaptureSourceInfo &cap : captures) {
+		const QString name = QString::fromStdString(cap.displayName);
+		const QString typeName = QString::fromUtf8(obs_source_get_display_name(cap.typeId.c_str()));
+		QString label = typeName.isEmpty() ? name : QStringLiteral("%1 (%2)").arg(name, typeName);
+		if (cap.width > 0 && cap.height > 0)
+			label += QStringLiteral("  [%1×%2]").arg(cap.width).arg(cap.height);
+		else if (!cap.deviceKey.empty())
+			label += QStringLiteral("  [device]");
+		QAction *act = shareMenu->addAction(label);
+		OBSSource held = cap.source;
+		connect(act, &QAction::triggered, this, [this, held]() {
+			if (!scene || !held)
+				return;
+			if (vsp::VerticalSceneHasSource(scene, held)) {
+				QMessageBox::information(this, Translate("AddSource"),
+							 Translate("SharedCameraAlreadyAdded"));
+				return;
+			}
+			AddSourceToActiveScene(held, true);
+			NotifySharedCameraFeed();
+			EmitSourceUiChanged();
+		});
+	}
+	if (captures.empty())
+		shareMenu->setEnabled(false);
+
 	const QPoint pos = button ? button->mapToGlobal(QPoint(0, button->height()))
 				  : QCursor::pos();
 	menu.exec(pos);
@@ -1526,31 +1544,6 @@ void ShortsDock::RemoveVerticalItemsForSource(obs_source_t *source)
 		obs_sceneitem_remove(item);
 }
 
-bool ShortsDock::TryShareCaptureFromSettings(const char *typeId, obs_data_t *settings, const char *logReason)
-{
-	if (!scene || !vsp::IsVideoCaptureSourceId(typeId))
-		return false;
-	const std::string key = vsp::GetCaptureDeviceKeyFromSettings(typeId, settings);
-	if (key.empty())
-		return false;
-	OBSSourceAutoRelease existing = vsp::FindExistingCaptureByDeviceKey(key, nullptr);
-	if (!existing)
-		return false;
-	if (vsp::VerticalSceneHasSource(scene, existing)) {
-		blog(LOG_INFO, "[obs-shorts-vertical] Camera share (%s): device already on vertical scene key=%s",
-		     logReason ? logReason : "?", key.c_str());
-		QMessageBox::information(this, Translate("AddSource"), Translate("SharedCameraAlreadyAdded"));
-		return true;
-	}
-	AddSourceToActiveScene(existing, true);
-	blog(LOG_INFO,
-	     "[obs-shorts-vertical] Camera share (%s): reused existing source '%s' key=%s (no second HW open)",
-	     logReason ? logReason : "?", obs_source_get_name(existing), key.c_str());
-	NotifySharedCameraFeed();
-	EmitSourceUiChanged();
-	return true;
-}
-
 void ShortsDock::NotifySharedCameraFeed()
 {
 	/* One informational notice per dock lifetime — avoid dialog spam. */
@@ -1560,179 +1553,206 @@ void ShortsDock::NotifySharedCameraFeed()
 	QMessageBox::information(this, Translate("AddSource"), Translate("SharedCameraFeedInfo"));
 }
 
-void ShortsDock::ResolveSharedCapture(OBSSource created)
+void ShortsDock::LogCameraSourceDiagnostics(const char *phase, obs_source_t *source, obs_sceneitem_t *item,
+					    bool creationReturnedNull) const
 {
-	if (clearing || !created || !scene)
+	if (creationReturnedNull) {
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] Camera diag [%s]: source creation returned null",
+		     phase ? phase : "?");
 		return;
-	if (!vsp::IsVideoCaptureSourceId(obs_source_get_id(created)))
+	}
+	if (!source) {
+		blog(LOG_ERROR, "[obs-shorts-vertical] Camera diag [%s]: source pointer is null",
+		     phase ? phase : "?");
 		return;
+	}
 
-	const std::string key = vsp::GetCaptureDeviceKey(created);
-	if (key.empty())
-		return;
-
-	OBSSourceAutoRelease existing = vsp::FindExistingCaptureByDeviceKey(key, created);
-	if (!existing)
-		return;
+	const char *id = obs_source_get_id(source);
+	const char *name = obs_source_get_name(source);
+	const std::string deviceKey = vsp::GetCaptureDeviceKey(source);
+	const std::string deviceName = vsp::GetCaptureDeviceDisplayName(source);
+	const uint32_t w = obs_source_get_width(source);
+	const uint32_t h = obs_source_get_height(source);
+	const uint32_t flags = obs_source_get_output_flags(source);
+	const bool onScene = scene && vsp::VerticalSceneHasSource(scene, source);
+	const bool itemVisible = item ? obs_sceneitem_visible(item) : false;
+	const bool callbackSeesItems = drawCallbackCount > 0;
 
 	blog(LOG_INFO,
-	     "[obs-shorts-vertical] Camera share resolve: replacing new source '%s' with existing '%s' key=%s",
-	     obs_source_get_name(created), obs_source_get_name(existing), key.c_str());
+	     "[obs-shorts-vertical] Camera diag [%s]: id=%s name='%s' device_id='%s' device_name='%s' "
+	     "width=%u height=%u active=%d showing=%d enabled=%d flags=0x%x private=%d "
+	     "added_to_vertical_scene=%d item_visible=%d render_callback_alive=%d draw_frames=%llu",
+	     phase ? phase : "?", id ? id : "(null)", name ? name : "(null)",
+	     deviceKey.c_str(), deviceName.c_str(), w, h, (int)obs_source_active(source),
+	     (int)obs_source_showing(source), (int)obs_source_enabled(source), flags,
+	     (int)obs_source_is_private(source), (int)onScene, (int)itemVisible, (int)callbackSeesItems,
+	     (unsigned long long)drawCallbackCount);
 
-	RemoveVerticalItemsForSource(created);
-	/* Destroy the unused second capture source so it cannot hold/steal the device. */
-	obs_source_remove(created);
-
-	if (!vsp::VerticalSceneHasSource(scene, existing))
-		AddSourceToActiveScene(existing, true);
-
-	NotifySharedCameraFeed();
-	EmitSourceUiChanged();
+	if (w == 0 || h == 0) {
+		blog(LOG_WARNING,
+		     "[obs-shorts-vertical] Camera diag [%s]: dimensions are 0x0 — camera is NOT initialized "
+		     "(do not treat as ready)",
+		     phase ? phase : "?");
+	}
 }
 
-void ShortsDock::WatchCaptureSourceForShare(obs_source_t *created)
+void ShortsDock::MaybeDestroyPrivateCapture(obs_source_t *source)
+{
+	if (!source || !obs_source_is_private(source))
+		return;
+	if (!vsp::IsVideoCaptureSourceId(obs_source_get_id(source)))
+		return;
+	/* Still referenced by the active vertical scene? */
+	if (scene && vsp::VerticalSceneHasSource(scene, source))
+		return;
+	/* Still on any other Vertical Shorts scene? */
+	for (auto it = verticalScenes.constBegin(); it != verticalScenes.constEnd(); ++it) {
+		obs_scene_t *s = it.value();
+		if (s && vsp::VerticalSceneHasSource(s, source))
+			return;
+	}
+	blog(LOG_INFO, "[obs-shorts-vertical] Destroying private Vertical Shorts camera '%s' (no remaining items)",
+	     obs_source_get_name(source));
+	obs_source_remove(source);
+}
+
+void ShortsDock::WatchIndependentCaptureInit(obs_source_t *created)
 {
 	if (!created)
 		return;
 	OBSSource held = created;
-	/* Properties dialog is modeless — poll until a device id appears, then share if matched. */
-	const int delaysMs[] = {400, 1000, 2000, 4000, 7000};
+
+	const int delaysMs[] = {300, 800, 1500, 2500, 4000, 6000, 9000};
 	for (int delay : delaysMs) {
-		QTimer::singleShot(delay, this, [this, held]() {
+		QTimer::singleShot(delay, this, [this, held, delay]() {
 			if (clearing || !held)
 				return;
-			/* If the provisional source was already removed/replaced, stop. */
-			OBSSourceAutoRelease still = obs_get_source_by_name(obs_source_get_name(held));
-			if (!still || still.Get() != held.Get())
-				return;
-			const std::string key = vsp::GetCaptureDeviceKey(held);
-			if (key.empty())
-				return;
-			OBSSourceAutoRelease existing = vsp::FindExistingCaptureByDeviceKey(key, held);
-			if (existing) {
-				ResolveSharedCapture(held);
+			obs_sceneitem_t *item = nullptr;
+			if (scene) {
+				struct Find {
+					obs_source_t *src;
+					obs_sceneitem_t *item;
+				} find{held, nullptr};
+				obs_scene_enum_items(
+					scene,
+					[](obs_scene_t *, obs_sceneitem_t *si, void *p) -> bool {
+						auto *f = static_cast<Find *>(p);
+						if (obs_sceneitem_get_source(si) == f->src) {
+							f->item = si;
+							return false;
+						}
+						return true;
+					},
+					&find);
+				item = find.item;
+			}
+			LogCameraSourceDiagnostics(delay < 1000 ? "init_watch" : "init_poll", held, item, false);
+
+			const uint32_t w = obs_source_get_width(held);
+			const uint32_t h = obs_source_get_height(held);
+			if (w > 0 && h > 0) {
+				if (item) {
+					const VerticalFitMode mode = LoadFitMode(item, VerticalFitMode::FitInside);
+					ApplyVerticalFitMode(item, mode, true);
+					ValidateItemTransform(item);
+					EnsureCanvasProgramChannel(true);
+				}
+				blog(LOG_INFO,
+				     "[obs-shorts-vertical] Independent camera ready: '%s' %ux%u — Fit to Vertical Canvas applied",
+				     obs_source_get_name(held), w, h);
 				return;
 			}
 		});
 	}
-	/* Final fallback after last poll window. */
-	QTimer::singleShot(7500, this, [this, held]() {
+
+	/* After properties settle: device chosen but still 0×0 → independent session failed. */
+	QTimer::singleShot(10000, this, [this, held]() {
 		if (clearing || !held)
 			return;
-		OBSSourceAutoRelease still = obs_get_source_by_name(obs_source_get_name(held));
-		if (!still || still.Get() != held.Get())
+		const uint32_t w = obs_source_get_width(held);
+		const uint32_t h = obs_source_get_height(held);
+		if (w > 0 && h > 0)
 			return;
-		if (vsp::FindExistingCaptureByDeviceKey(vsp::GetCaptureDeviceKey(held), held)) {
-			ResolveSharedCapture(held);
-			return;
-		}
-		if (obs_source_get_width(held) == 0 || obs_source_get_height(held) == 0) {
-			QMessageBox::warning(this, Translate("AddSource"), Translate("CameraDeviceInUseHint"));
+
+		const std::string key = vsp::GetCaptureDeviceKey(held);
+		LogCameraSourceDiagnostics("init_failed_0x0", held, nullptr, false);
+		if (key.empty()) {
 			blog(LOG_WARNING,
-			     "[obs-shorts-vertical] Camera share fallback: source '%s' has no frames "
-			     "(device may be busy; share existing or pick another device)",
-			     obs_source_get_name(held));
+			     "[obs-shorts-vertical] Independent camera still 0×0 with no device selected "
+			     "(user may have cancelled Properties)");
+			return;
 		}
+
+		/* Device was selected but never produced frames — typically exclusive device lock. */
+		QMessageBox::warning(this, Translate("AddSource"), Translate("CaptureIndependentBusy"));
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] Independent camera failed: device_key=%s size=0x0 — "
+		     "driver refused a second capture session (not borrowing main OBS source)",
+		     key.c_str());
 	});
 }
 
-void ShortsDock::CreateOrShareCaptureSource(const std::string &typeId, const QString &label)
+void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId, const QString &label)
 {
 	if (!scene)
 		return;
 
-	const std::string family = vsp::CaptureSourceFamily(typeId.c_str());
-	std::vector<vsp::CaptureSourceInfo> peers;
-	for (const vsp::CaptureSourceInfo &cap : vsp::EnumerateCaptureSources()) {
-		if (vsp::CaptureSourceFamily(cap.typeId.c_str()) == family)
-			peers.push_back(cap);
-	}
-
-	if (!peers.empty()) {
-		QDialog dlg(this);
-		dlg.setWindowTitle(QString::fromUtf8(Translate("ShareCameraDialogTitle")));
-		auto *layout = new QVBoxLayout(&dlg);
-		auto *text = new QLabel(QString::fromUtf8(Translate("ShareCameraDialogText")), &dlg);
-		text->setWordWrap(true);
-		layout->addWidget(text);
-		auto *list = new QListWidget(&dlg);
-		for (const vsp::CaptureSourceInfo &cap : peers) {
-			QString row = QString::fromStdString(cap.displayName);
-			if (cap.width > 0 && cap.height > 0)
-				row += QStringLiteral("  (%1×%2)").arg(cap.width).arg(cap.height);
-			if (!cap.deviceKey.empty())
-				row += QStringLiteral("\n  ") + QString::fromStdString(cap.deviceKey);
-			auto *item = new QListWidgetItem(row, list);
-			const char *uuid = obs_source_get_uuid(cap.source);
-			item->setData(Qt::UserRole, QString::fromUtf8(uuid ? uuid : ""));
-			/* Prefer sources that already produce frames. */
-			if (cap.width > 0 && cap.height > 0 && list->currentItem() == nullptr)
-				list->setCurrentItem(item);
-		}
-		if (!list->currentItem() && list->count() > 0)
-			list->setCurrentRow(0);
-		layout->addWidget(list);
-		auto *buttons = new QDialogButtonBox(&dlg);
-		QPushButton *shareBtn = buttons->addButton(QString::fromUtf8(Translate("ShareSelectedCamera")),
-							   QDialogButtonBox::AcceptRole);
-		QPushButton *createBtn = buttons->addButton(QString::fromUtf8(Translate("CreateNewCaptureSession")),
-							    QDialogButtonBox::ActionRole);
-		buttons->addButton(QDialogButtonBox::Cancel);
-		layout->addWidget(buttons);
-
-		QObject::connect(shareBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
-		bool createNew = false;
-		QObject::connect(createBtn, &QPushButton::clicked, &dlg, [&]() {
-			createNew = true;
-			dlg.done(QDialog::Accepted);
-		});
-		QObject::connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-		if (dlg.exec() != QDialog::Accepted)
-			return;
-
-		if (!createNew) {
-			QListWidgetItem *sel = list->currentItem();
-			if (!sel) {
-				QMessageBox::warning(this, Translate("AddSource"), Translate("CameraDeviceInUseHint"));
-				return;
-			}
-			const QString uuid = sel->data(Qt::UserRole).toString();
-			OBSSourceAutoRelease existing = uuid.isEmpty()
-								? nullptr
-								: obs_get_source_by_uuid(uuid.toUtf8().constData());
-			if (!existing) {
-				QMessageBox::warning(this, Translate("AddSource"), Translate("CameraDeviceInUseHint"));
-				return;
-			}
-			if (vsp::VerticalSceneHasSource(scene, existing)) {
-				QMessageBox::information(this, Translate("AddSource"),
-							 Translate("SharedCameraAlreadyAdded"));
-				return;
-			}
-			AddSourceToActiveScene(existing, true);
-			NotifySharedCameraFeed();
-			EmitSourceUiChanged();
-			return;
-		}
-		/* Fall through: user explicitly requested a new capture session. */
-	}
-
-	const QString name = UniqueSourceName(label);
-	obs_source_t *created = obs_source_create(typeId.c_str(), name.toUtf8().constData(), nullptr, nullptr);
-	if (!created) {
+	const std::string createId = vsp::ResolveLatestInputTypeId(unversionedId.c_str());
+	if (createId.empty() || !vsp::IsVideoCaptureSourceId(createId.c_str())) {
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] CreateIndependentVideoCapture: no supported Video Capture Device id "
+		     "(unversioned='%s' resolved='%s')",
+		     unversionedId.c_str(), createId.c_str());
 		QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
 		return;
 	}
 
-	AddSourceToActiveScene(created, true);
-	WatchCaptureSourceForShare(created);
+	blog(LOG_INFO,
+	     "[obs-shorts-vertical] Creating independent Vertical Shorts Video Capture Device: "
+	     "unversioned='%s' create_id='%s' (OBS latest)",
+	     unversionedId.c_str(), createId.c_str());
+
+	const QString name = UniqueSourceName(label);
+	/* Private source: owned by Vertical Shorts — does not appear in main OBS Sources list. */
+	obs_source_t *created =
+		obs_source_create_private(createId.c_str(), name.toUtf8().constData(), nullptr);
+	if (!created) {
+		LogCameraSourceDiagnostics("create_private_null", nullptr, nullptr, true);
+		blog(LOG_WARNING,
+		     "[obs-shorts-vertical] obs_source_create_private failed for '%s'; trying obs_source_create",
+		     createId.c_str());
+		created = obs_source_create(createId.c_str(), name.toUtf8().constData(), nullptr, nullptr);
+	}
+	if (!created) {
+		LogCameraSourceDiagnostics("create_failed_null", nullptr, nullptr, true);
+		QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
+		return;
+	}
+
+	LogCameraSourceDiagnostics("after_create", created, nullptr, false);
+
+	obs_sceneitem_t *item = AddSourceToActiveScene(created, true);
+	if (!item) {
+		blog(LOG_ERROR,
+		     "[obs-shorts-vertical] Independent camera '%s' created but NOT added to Vertical Scene",
+		     obs_source_get_name(created));
+		LogCameraSourceDiagnostics("add_to_scene_failed", created, nullptr, false);
+		obs_source_release(created);
+		QMessageBox::warning(this, Translate("AddSource"), Translate("CreateSourceFailed"));
+		return;
+	}
+
+	LogCameraSourceDiagnostics("after_add_to_scene", created, item, false);
+	EnsureCanvasProgramChannel(true);
+	WatchIndependentCaptureInit(created);
+
 	if (obs_source_configurable(created))
 		obs_frontend_open_source_properties(created);
 
 	blog(LOG_INFO,
-	     "[obs-shorts-vertical] Created capture source '%s' (%s); watching for device-id share match",
-	     obs_source_get_name(created), typeId.c_str());
+	     "[obs-shorts-vertical] Independent camera source '%s' (%s) added; Properties opened; waiting for frames",
+	     obs_source_get_name(created), createId.c_str());
 	obs_source_release(created);
 	EmitSourceUiChanged();
 }
@@ -2028,10 +2048,9 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 	if (!scene || !source)
 		return nullptr;
 
-	/* Shared reference: obs_scene_add references the existing OBS source.
-	 * Device settings stay on that source; vertical gets its own scene item
-	 * (independent pos/scale/crop/bounds) so the camera can be in both
-	 * horizontal and vertical production without opening the device twice. */
+	/* Add to the active Vertical Scene. For independent private cameras this is
+	 * Vertical Shorts ownership; for explicit Add Existing / Share this is a
+	 * reference with an independent vertical scene-item transform. */
 	obs_sceneitem_t *item = obs_scene_add(scene, source);
 	if (!item) {
 		blog(LOG_WARNING, "[obs-shorts-vertical] obs_scene_add failed for '%s'", obs_source_get_name(source));
@@ -2069,7 +2088,7 @@ obs_sceneitem_t *ShortsDock::AddSourceToActiveScene(obs_source_t *source, bool f
 
 	obs_source_t *channel0 = canvas ? obs_canvas_get_channel(canvas, 0) : nullptr;
 	blog(LOG_INFO,
-	     "[obs-shorts-vertical] Added '%s' (%s) shared_source=%p to vertical scene: item_visible=%d "
+	     "[obs-shorts-vertical] Added '%s' (%s) source=%p to vertical scene: item_visible=%d "
 	     "source_active=%d source_showing=%d source_enabled=%d size=%ux%u canvas=%ux%u fit=Fit "
 	     "channel0=%s",
 	     obs_source_get_name(source), obs_source_get_id(source), (void *)source, (int)obs_sceneitem_visible(item),
@@ -2093,8 +2112,12 @@ void ShortsDock::RequestRemoveSource()
 		return;
 	if (QMessageBox::question(this, Translate("RemoveSource"), Translate("ConfirmRemoveSource")) != QMessageBox::Yes)
 		return;
-	for (obs_sceneitem_t *item : selected)
+	for (obs_sceneitem_t *item : selected) {
+		obs_source_t *src = obs_sceneitem_get_source(item);
+		OBSSource held = src; /* keep alive across item remove */
 		obs_sceneitem_remove(item);
+		MaybeDestroyPrivateCapture(held);
+	}
 	EmitSourceUiChanged();
 }
 
@@ -2281,22 +2304,32 @@ void ShortsDock::RequestPasteSource()
 	if (g_sourceClipboard.settings)
 		obs_data_apply(settings, g_sourceClipboard.settings);
 
-	/* Prefer sharing an existing capture by stable device id over a second open. */
-	if (TryShareCaptureFromSettings(g_sourceClipboard.id.c_str(), settings, "paste"))
-		return;
-
 	const char *display = obs_source_get_display_name(g_sourceClipboard.id.c_str());
 	const QString base = display && *display ? QString::fromUtf8(display) : QStringLiteral("Source");
 	const QString name = UniqueSourceName(base);
-	obs_source_t *created = obs_source_create(g_sourceClipboard.id.c_str(), name.toUtf8().constData(), settings,
-						  g_sourceClipboard.hotkeys);
+
+	const std::string createId = vsp::ResolveLatestInputTypeId(g_sourceClipboard.id.c_str());
+	const bool isCapture = vsp::IsVideoCaptureSourceId(createId.c_str()) ||
+			       vsp::IsVideoCaptureSourceId(g_sourceClipboard.id.c_str());
+
+	obs_source_t *created = nullptr;
+	if (isCapture) {
+		/* Independent paste: never silently reuse main OBS capture. */
+		created = obs_source_create_private(createId.c_str(), name.toUtf8().constData(), settings);
+		if (!created)
+			created = obs_source_create(createId.c_str(), name.toUtf8().constData(), settings,
+						    g_sourceClipboard.hotkeys);
+	} else {
+		created = obs_source_create(createId.empty() ? g_sourceClipboard.id.c_str() : createId.c_str(),
+					    name.toUtf8().constData(), settings, g_sourceClipboard.hotkeys);
+	}
 	if (!created) {
 		QMessageBox::warning(this, Translate("PasteSource"), Translate("CreateSourceFailed"));
 		return;
 	}
 	AddSourceToActiveScene(created, true);
-	if (vsp::IsVideoCaptureSourceId(g_sourceClipboard.id.c_str()))
-		WatchCaptureSourceForShare(created);
+	if (isCapture)
+		WatchIndependentCaptureInit(created);
 	obs_source_release(created);
 	EmitSourceUiChanged();
 }

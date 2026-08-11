@@ -243,13 +243,14 @@ private:
 	void EmitSourceUiChanged();
 	obs_source_t *EnsureVerticalTransitionSource(const QString &name);
 	obs_sceneitem_t *AddSourceToActiveScene(obs_source_t *source, bool fitIfSized);
-	/* Camera-sharing: create or reuse a Video Capture Device without a second HW open. */
-	void CreateOrShareCaptureSource(const std::string &typeId, const QString &label);
-	void WatchCaptureSourceForShare(obs_source_t *created);
-	void ResolveSharedCapture(OBSSource created);
+	/* Independent Vertical Shorts Video Capture Device (private source; no silent main-OBS reuse). */
+	void CreateIndependentVideoCapture(const std::string &unversionedId, const QString &label);
+	void WatchIndependentCaptureInit(obs_source_t *created);
+	void LogCameraSourceDiagnostics(const char *phase, obs_source_t *source, obs_sceneitem_t *item,
+					bool creationReturnedNull) const;
 	void RemoveVerticalItemsForSource(obs_source_t *source);
-	bool TryShareCaptureFromSettings(const char *typeId, obs_data_t *settings, const char *logReason);
 	void NotifySharedCameraFeed();
+	void MaybeDestroyPrivateCapture(obs_source_t *source);
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
