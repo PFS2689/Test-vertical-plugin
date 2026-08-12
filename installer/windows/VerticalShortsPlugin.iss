@@ -129,7 +129,7 @@ type
     dwSize: DWORD;
     cntUsage: DWORD;
     th32ProcessID: DWORD;
-    th32DefaultHeapID: NativeUInt;
+    th32DefaultHeapID: Int64;
     th32ModuleID: DWORD;
     cntThreads: DWORD;
     th32ParentProcessID: DWORD;
