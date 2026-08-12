@@ -249,6 +249,8 @@ private:
 	void WatchIndependentCaptureInit(obs_source_t *created);
 	void ForceCaptureDeviceOpen(obs_source_t *source, bool applySafeDefaults = false);
 	void ApplySafeCaptureDefaults(obs_source_t *source);
+	void ReportCameraInitFailure(obs_source_t *source);
+	const char *ClassifyCameraInitFailure(obs_source_t *source) const;
 	void LogCameraSourceDiagnostics(const char *phase, obs_source_t *source, obs_sceneitem_t *item,
 					bool creationReturnedNull) const;
 	void LogCameraSettingsSnapshot(const char *phase, obs_source_t *source) const;
