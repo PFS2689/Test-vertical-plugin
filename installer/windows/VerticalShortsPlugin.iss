@@ -120,13 +120,9 @@ Type: filesandordirs; Name: "{app}\data\obs-plugins\obs-shorts-vertical"
 const
   OBS_WINDOW_CLASS = 'OBSWindowClass';
   TH32CS_SNAPPROCESS = $00000002;
-  MAX_PATH = 260;
+  MAX_PATH_CHARS = 260;
   INVALID_HANDLE_VALUE = -1;
-  GENERIC_READ = $80000000;
-  OPEN_EXISTING = 3;
-  FILE_ATTRIBUTE_NORMAL = $00000080;
   FILE_SHARE_NONE = 0;
-  IDRETRY = 4;
 
 type
   TProcessEntry32 = record
@@ -139,7 +135,7 @@ type
     th32ParentProcessID: DWORD;
     pcPriClassBase: Longint;
     dwFlags: DWORD;
-    szExeFile: array[0..MAX_PATH - 1] of Char;
+    szExeFile: array[0..MAX_PATH_CHARS - 1] of Char;
   end;
 
 var
