@@ -78,7 +78,10 @@ VersionInfoProductName={#MyAppName}
 VersionInfoProductVersion={#MyAppVersion}
 VersionInfoCopyright=Copyright (C) Vertical Shorts Plugin Contributors
 AllowNoIcons=yes
-CloseApplications=no
+; Restart Manager: detect apps locking files we will replace (e.g. obs64.exe holding the plugin DLL).
+; Setup will prompt — never force-kill OBS (that would interrupt streams/recordings).
+CloseApplications=yes
+CloseApplicationsFilter=obs*.exe,*.dll
 RestartApplications=no
 RestartIfNeededByRun=no
 CreateUninstallRegKey=yes
@@ -92,9 +95,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; DLL → OBS obs-plugins\64bit (only during install phase; {app} is valid here)
+; restartreplace is a last-resort deferral if a handle briefly lingers after OBS exits.
+; Primary protection is EnsureOBSClosed + Restart Manager before the copy stage.
 Source: "{#SourceDir}\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"; \
     DestDir: "{app}\obs-plugins\64bit"; \
-    Flags: ignoreversion uninsrestartdelete
+    Flags: ignoreversion uninsrestartdelete restartreplace
 ; Resources → OBS data\obs-plugins\obs-shorts-vertical\
 Source: "{#SourceDir}\obs-shorts-vertical\data\*"; \
     DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
@@ -114,7 +119,28 @@ Type: filesandordirs; Name: "{app}\data\obs-plugins\obs-shorts-vertical"
 [Code]
 const
   OBS_WINDOW_CLASS = 'OBSWindowClass';
-  WM_CLOSE = $0010;
+  TH32CS_SNAPPROCESS = $00000002;
+  MAX_PATH = 260;
+  INVALID_HANDLE_VALUE = THandle(-1);
+  GENERIC_READ = $80000000;
+  OPEN_EXISTING = 3;
+  FILE_ATTRIBUTE_NORMAL = $00000080;
+  FILE_SHARE_NONE = 0;
+  IDRETRY = 4;
+
+type
+  TProcessEntry32 = record
+    dwSize: DWORD;
+    cntUsage: DWORD;
+    th32ProcessID: DWORD;
+    th32DefaultHeapID: ULONG_PTR;
+    th32ModuleID: DWORD;
+    cntThreads: DWORD;
+    th32ParentProcessID: DWORD;
+    pcPriClassBase: Longint;
+    dwFlags: DWORD;
+    szExeFile: array[0..MAX_PATH - 1] of Char;
+  end;
 
 var
   GIsUpgrade: Boolean;
@@ -122,6 +148,19 @@ var
   GUpgradeBackupDir: String;
   GObsInstallPath: String; (* Detected OBS root; never requires app constant *)
   GExistingPluginDll: String;
+
+function CreateToolhelp32Snapshot(dwFlags, th32ProcessID: DWORD): THandle;
+  external 'CreateToolhelp32Snapshot@kernel32.dll stdcall';
+function Process32FirstW(hSnapshot: THandle; var lppe: TProcessEntry32): BOOL;
+  external 'Process32FirstW@kernel32.dll stdcall';
+function Process32NextW(hSnapshot: THandle; var lppe: TProcessEntry32): BOOL;
+  external 'Process32NextW@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+function CreateFileW(lpFileName: string; dwDesiredAccess, dwShareMode: DWORD;
+  lpSecurityAttributes: DWORD; dwCreationDisposition, dwFlagsAndAttributes: DWORD;
+  hTemplateFile: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
 
 function AddBackslashIfNeeded(const Path: String): String;
 begin
@@ -328,31 +367,111 @@ begin
   Result := APat - BPat;
 end;
 
-function IsOBSRunning: Boolean;
+function IsObsProcessName(const ExeName: String): Boolean;
+var
+  N: String;
 begin
-  (* Window/mutex check only — no app-constant paths. *)
-  Result := (FindWindowByClassName(OBS_WINDOW_CLASS) <> 0) or
-            CheckForMutexes('OBSStudioRunningMutex') or
-            CheckForMutexes('OBS32RunningMutex');
+  N := LowerCase(ExtractFileName(ExeName));
+  Result := (N = 'obs64.exe') or (N = 'obs32.exe') or (N = 'obs.exe');
 end;
 
-function TryCloseOBSWindows: Boolean;
+function IsOBSProcessRunning: Boolean;
 var
-  Wnd: HWND;
-  I: Integer;
+  Snapshot: THandle;
+  Entry: TProcessEntry32;
 begin
-  Result := True;
-  for I := 1 to 60 do begin
-    Wnd := FindWindowByClassName(OBS_WINDOW_CLASS);
-    if Wnd = 0 then begin
-      Sleep(500);
-      Result := not IsOBSRunning;
+  Result := False;
+  Snapshot := CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if Snapshot = INVALID_HANDLE_VALUE then
+    exit;
+
+  Entry.dwSize := SizeOf(Entry);
+  if Process32FirstW(Snapshot, Entry) then begin
+    repeat
+      if IsObsProcessName(Entry.szExeFile) then begin
+        Result := True;
+        Break;
+      end;
+    until not Process32NextW(Snapshot, Entry);
+  end;
+  CloseHandle(Snapshot);
+end;
+
+function ResolvePluginDllPath: String;
+var
+  Candidate: String;
+begin
+  Result := '';
+
+  { Prefer known existing DLL path from upgrade detection. }
+  if (GExistingPluginDll <> '') and FileExists(GExistingPluginDll) then begin
+    Result := GExistingPluginDll;
+    exit;
+  end;
+
+  { Wizard / app dir once available. }
+  try
+    Candidate := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.dll');
+    if FileExists(Candidate) then begin
+      Result := Candidate;
       exit;
     end;
-    PostMessage(Wnd, WM_CLOSE, 0, 0);
-    Sleep(250);
+  except
   end;
-  Result := not IsOBSRunning;
+
+  if GObsInstallPath <> '' then begin
+    Candidate := AddBackslashIfNeeded(GObsInstallPath) +
+      'obs-plugins\64bit\obs-shorts-vertical.dll';
+    if FileExists(Candidate) then begin
+      Result := Candidate;
+      exit;
+    end;
+  end;
+
+  Candidate := ExpandConstant('{autopf}\obs-studio\obs-plugins\64bit\obs-shorts-vertical.dll');
+  if FileExists(Candidate) then
+    Result := Candidate;
+end;
+
+(* Returns True when the DLL exists and cannot be opened exclusively (still locked). *)
+function IsPluginDllLocked: Boolean;
+var
+  DllPath: String;
+  H: THandle;
+begin
+  Result := False;
+  DllPath := ResolvePluginDllPath;
+  if (DllPath = '') or (not FileExists(DllPath)) then
+    exit;
+
+  { Exclusive open — fails while OBS (or anything else) holds the module. }
+  H := CreateFileW(DllPath, GENERIC_READ, FILE_SHARE_NONE, 0, OPEN_EXISTING,
+    FILE_ATTRIBUTE_NORMAL, 0);
+  if H = INVALID_HANDLE_VALUE then
+    Result := True
+  else
+    CloseHandle(H);
+end;
+
+function IsOBSRunning: Boolean;
+begin
+  { Window + mutex + process scan. Process scan catches obs64.exe even if
+    the main window is hidden or mutex names differ across OBS builds. }
+  Result := (FindWindowByClassName(OBS_WINDOW_CLASS) <> 0) or
+            CheckForMutexes('OBSStudioRunningMutex') or
+            CheckForMutexes('OBS32RunningMutex') or
+            IsOBSProcessRunning;
+end;
+
+function ObsBlocksPluginInstall: Boolean;
+begin
+  { Only gate when an existing plugin DLL must be replaced/unlocked.
+    Fresh installs (no DLL yet) can proceed while OBS is running. }
+  if ResolvePluginDllPath = '' then begin
+    Result := False;
+    exit;
+  end;
+  Result := IsOBSRunning or IsPluginDllLocked;
 end;
 
 function ConfirmUpgrade(const PrevVer, NewVer: String): Boolean;
@@ -368,31 +487,41 @@ begin
     MB_OKCANCEL, ['&Upgrade', 'Cancel'], 0) = IDOK;
 end;
 
+(* Blocks until OBS is closed and the plugin DLL is unlocked — never force-kills OBS. *)
 function EnsureOBSClosed: Boolean;
 var
   Answer: Integer;
+  I: Integer;
 begin
   Result := True;
-  if not IsOBSRunning then
+  if not ObsBlocksPluginInstall then
     exit;
 
-  Answer := TaskDialogMsgBox(
-    'OBS Studio must be closed',
-    'OBS Studio must be closed before Vertical Shorts Plugin can be updated.'#13#10#13#10 +
-    'Setup will ask OBS to quit normally. The plugin DLL cannot be replaced while OBS has it loaded.'#13#10#13#10 +
-    'OBS will not be force-killed without your confirmation.',
-    mbConfirmation, MB_OKCANCEL, ['&Close OBS and Continue', 'Cancel'], 0);
+  while ObsBlocksPluginInstall do begin
+    Answer := MsgBox(
+      'OBS Studio must be closed before Vertical Shorts can be updated.'#13#10#13#10 +
+      'Please close OBS Studio to continue.',
+      mbConfirmation, MB_RETRYCANCEL);
 
-  if Answer <> IDOK then begin
-    Result := False;
-    exit;
+    if Answer <> IDRETRY then begin
+      Result := False;
+      exit;
+    end;
+
+    { Give OBS a moment to release the DLL after the user closes it. }
+    for I := 1 to 20 do begin
+      if not ObsBlocksPluginInstall then
+        Break;
+      Sleep(250);
+    end;
   end;
 
-  if not TryCloseOBSWindows then begin
+  { Final verification: DLL must be replaceable before file-copy stage. }
+  if IsPluginDllLocked then begin
     MsgBox(
-      'OBS Studio is still running.'#13#10#13#10 +
-      'Please close OBS manually, then run Setup again.'#13#10 +
-      'The plugin DLL cannot be replaced while OBS has it loaded.',
+      'OBS Studio must be closed before Vertical Shorts can be updated.'#13#10#13#10 +
+      'Please close OBS Studio to continue.'#13#10#13#10 +
+      'The plugin DLL is still locked. Close OBS completely, then run Setup again.',
       mbError, MB_OK);
     Result := False;
   end;
@@ -556,11 +685,21 @@ begin
   NeedsRestart := False;
   Result := '';
 
-  if IsOBSRunning then begin
+  { Gate BEFORE file copy / DeleteFile — never reach "DeleteFile failed; code 5". }
+  if ObsBlocksPluginInstall then begin
     if not EnsureOBSClosed then begin
-      Result := 'OBS Studio is still running. Close it and retry Setup.';
+      Result :=
+        'OBS Studio must be closed before Vertical Shorts can be updated. ' +
+        'Please close OBS Studio and retry Setup.';
       exit;
     end;
+  end;
+
+  if IsPluginDllLocked then begin
+    Result :=
+      'OBS Studio must be closed before Vertical Shorts can be updated. ' +
+      'The plugin DLL is still locked. Close OBS Studio completely and retry.';
+    exit;
   end;
 
   if not IsValidObsDir(ExpandConstant('{app}')) then begin
