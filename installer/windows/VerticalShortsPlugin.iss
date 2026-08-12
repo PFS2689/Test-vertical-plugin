@@ -371,6 +371,18 @@ begin
   Result := (N = 'obs64.exe') or (N = 'obs32.exe') or (N = 'obs.exe');
 end;
 
+function ProcessEntryExeName(const Entry: TProcessEntry32): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to MAX_PATH_CHARS - 1 do begin
+    if Entry.szExeFile[I] = #0 then
+      Break;
+    Result := Result + Entry.szExeFile[I];
+  end;
+end;
+
 function IsOBSProcessRunning: Boolean;
 var
   Snapshot: THandle;
@@ -384,7 +396,7 @@ begin
   Entry.dwSize := SizeOf(Entry);
   if Process32FirstW(Snapshot, Entry) then begin
     repeat
-      if IsObsProcessName(Entry.szExeFile) then begin
+      if IsObsProcessName(ProcessEntryExeName(Entry)) then begin
         Result := True;
         Break;
       end;
