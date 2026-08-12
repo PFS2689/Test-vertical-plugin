@@ -2629,8 +2629,9 @@ void ShortsDock::RequestPasteSource()
 	}
 	AddSourceToActiveScene(created, true);
 	if (isCapture) {
-		ForceCaptureDeviceOpen(created);
 		WatchIndependentCaptureInit(created);
+		/* Paste already carries device settings — open now with safe defaults. */
+		ForceCaptureDeviceOpen(created, true);
 	}
 	obs_source_release(created);
 	EmitSourceUiChanged();
