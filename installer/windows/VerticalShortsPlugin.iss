@@ -121,7 +121,7 @@ const
   OBS_WINDOW_CLASS = 'OBSWindowClass';
   TH32CS_SNAPPROCESS = $00000002;
   MAX_PATH = 260;
-  INVALID_HANDLE_VALUE = THandle(-1);
+  INVALID_HANDLE_VALUE = -1;
   GENERIC_READ = $80000000;
   OPEN_EXISTING = 3;
   FILE_ATTRIBUTE_NORMAL = $00000080;
@@ -133,7 +133,7 @@ type
     dwSize: DWORD;
     cntUsage: DWORD;
     th32ProcessID: DWORD;
-    th32DefaultHeapID: ULONG_PTR;
+    th32DefaultHeapID: NativeUInt;
     th32ModuleID: DWORD;
     cntThreads: DWORD;
     th32ParentProcessID: DWORD;
