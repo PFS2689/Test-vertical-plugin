@@ -247,7 +247,8 @@ private:
 	/* Independent Vertical Shorts Video Capture Device (real libobs source; no silent main-OBS reuse). */
 	void CreateIndependentVideoCapture(const std::string &unversionedId, const QString &label);
 	void WatchIndependentCaptureInit(obs_source_t *created);
-	void ForceCaptureDeviceOpen(obs_source_t *source);
+	void ForceCaptureDeviceOpen(obs_source_t *source, bool applySafeDefaults = false);
+	void ApplySafeCaptureDefaults(obs_source_t *source);
 	void LogCameraSourceDiagnostics(const char *phase, obs_source_t *source, obs_sceneitem_t *item,
 					bool creationReturnedNull) const;
 	void LogCameraSettingsSnapshot(const char *phase, obs_source_t *source) const;
@@ -256,6 +257,7 @@ private:
 	void MaybeDestroyPrivateCapture(obs_source_t *source);
 	bool IsIndependentCapture(obs_source_t *source) const;
 	static bool SourceUsedInFrontendScenes(obs_source_t *source);
+	static void OnPendingCameraUpdate(void *data, calldata_t *cd);
 
 	std::unique_ptr<OBSEventFilter> BuildEventFilter();
 	bool HandlePreviewEvent(QObject *obj, QEvent *event);
@@ -332,6 +334,9 @@ private:
 	bool sharedCameraNoticeShown = false;
 	/* UUIDs of Vertical Shorts–owned independent capture sources created this session. */
 	QSet<QString> independentCaptureUuids;
+	/* Strong ref while a new camera is being configured/initialized (same pointer as Properties). */
+	OBSSource pendingCameraSource;
+	OBSSignal pendingCameraUpdateSignal;
 	/* Config schema tracking (independent from PLUGIN_VERSION). */
 	int loadedConfigSchema = 0;
 	bool configSchemaTooNew = false;

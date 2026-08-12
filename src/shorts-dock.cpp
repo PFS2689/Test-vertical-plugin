@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCursor>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -30,7 +31,6 @@
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPointer>
-#include <QPair>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSet>
@@ -1642,12 +1642,46 @@ void ShortsDock::LogCameraSettingsSnapshot(const char *phase, obs_source_t *sour
 	}
 }
 
-void ShortsDock::ForceCaptureDeviceOpen(obs_source_t *source)
+void ShortsDock::ApplySafeCaptureDefaults(obs_source_t *source)
+{
+	if (!source)
+		return;
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	if (!settings)
+		return;
+
+	/* Prefer device-default negotiation (win-dshow ResType_Preferred / FPS matching / Any format). */
+	obs_data_set_int(settings, "res_type", 0);          /* ResType_Preferred */
+	obs_data_set_string(settings, "resolution", "");
+	obs_data_set_int(settings, "frame_interval", -1);   /* FPS_MATCHING */
+	obs_data_set_int(settings, "video_format", 0);      /* VideoFormat::Any */
+	obs_data_set_bool(settings, "active", true);
+	obs_data_set_bool(settings, "deactivate_when_not_showing", false);
+
+	blog(LOG_INFO,
+	     "[obs-shorts-vertical] Applying safe camera defaults on '%s' (preferred res/FPS, format=Any, active=1)",
+	     obs_source_get_name(source));
+	obs_source_update(source, settings);
+}
+
+void ShortsDock::ForceCaptureDeviceOpen(obs_source_t *source, bool applySafeDefaults)
 {
 	if (!source)
 		return;
 
+	const std::string key = vsp::GetCaptureDeviceKey(source);
+	if (key.empty()) {
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] ForceCaptureDeviceOpen skipped for '%s' — no device ID yet "
+		     "(wait for Properties to save video_device_id onto this same source %p)",
+		     obs_source_get_name(source), (void *)source);
+		return;
+	}
+
 	obs_source_set_enabled(source, true);
+
+	if (applySafeDefaults)
+		ApplySafeCaptureDefaults(source);
 
 	OBSDataAutoRelease settings = obs_source_get_settings(source);
 	if (settings) {
@@ -1660,7 +1694,7 @@ void ShortsDock::ForceCaptureDeviceOpen(obs_source_t *source)
 		obs_source_update(source, settings);
 	}
 
-	/* Explicit dshow activate(bool) proc — same path as Properties Activate button. */
+	/* Explicit dshow activate(true) — same path as Properties Activate button. */
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	if (ph) {
 		calldata_t cd;
@@ -1668,17 +1702,45 @@ void ShortsDock::ForceCaptureDeviceOpen(obs_source_t *source)
 		calldata_set_bool(&cd, "active", true);
 		const bool ok = proc_handler_call(ph, "activate", &cd);
 		calldata_free(&cd);
-		blog(LOG_INFO, "[obs-shorts-vertical] Camera proc activate(true) %s for '%s'",
-		     ok ? "called" : "unavailable", obs_source_get_name(source));
+		blog(LOG_INFO, "[obs-shorts-vertical] Camera proc activate(true) %s for '%s' (source=%p)",
+		     ok ? "called" : "unavailable", obs_source_get_name(source), (void *)source);
 	}
 
 	EnsureCanvasProgramChannel(true);
 	EnsurePreviewSceneShowing(true);
 
 	blog(LOG_INFO,
-	     "[obs-shorts-vertical] ForceCaptureDeviceOpen '%s': active=%d showing=%d enabled=%d size=%ux%u",
-	     obs_source_get_name(source), (int)obs_source_active(source), (int)obs_source_showing(source),
-	     (int)obs_source_enabled(source), obs_source_get_width(source), obs_source_get_height(source));
+	     "[obs-shorts-vertical] ForceCaptureDeviceOpen '%s' source=%p: active=%d showing=%d enabled=%d "
+	     "size=%ux%u device_key=%s",
+	     obs_source_get_name(source), (void *)source, (int)obs_source_active(source),
+	     (int)obs_source_showing(source), (int)obs_source_enabled(source), obs_source_get_width(source),
+	     obs_source_get_height(source), key.c_str());
+}
+
+void ShortsDock::OnPendingCameraUpdate(void *data, calldata_t *)
+{
+	auto *dock = static_cast<ShortsDock *>(data);
+	if (!dock)
+		return;
+	/* Properties applies settings onto the retained source via obs_source_update (may be deferred
+	 * to the video thread). Bounce to UI thread to force open + diagnose the SAME pointer. */
+	QMetaObject::invokeMethod(
+		dock,
+		[dock]() {
+			if (dock->clearing || !dock->pendingCameraSource)
+				return;
+			obs_source_t *src = dock->pendingCameraSource;
+			blog(LOG_INFO,
+			     "[obs-shorts-vertical] Camera source update signal on retained source %p ('%s')",
+			     (void *)src, obs_source_get_name(src));
+			dock->LogCameraSettingsSnapshot("source_update_signal", src);
+			if (vsp::GetCaptureDeviceKey(src).empty())
+				return;
+			dock->ForceCaptureDeviceOpen(src, false);
+			if (obs_source_get_width(src) == 0 || obs_source_get_height(src) == 0)
+				dock->ForceCaptureDeviceOpen(src, true);
+		},
+		Qt::QueuedConnection);
 }
 
 bool ShortsDock::IsIndependentCapture(obs_source_t *source) const
@@ -1715,22 +1777,23 @@ void ShortsDock::MaybeDestroyPrivateCapture(obs_source_t *source)
 		return;
 	if (!vsp::IsVideoCaptureSourceId(obs_source_get_id(source)))
 		return;
-	/* Still referenced by the active vertical scene? */
 	if (scene && vsp::VerticalSceneHasSource(scene, source))
 		return;
-	/* Still on any other Vertical Shorts scene? */
 	for (auto it = verticalScenes.constBegin(); it != verticalScenes.constEnd(); ++it) {
 		obs_scene_t *s = it.value();
 		if (s && vsp::VerticalSceneHasSource(s, source))
 			return;
 	}
-	/* Still referenced from a main OBS scene? Leave it alone. */
 	if (SourceUsedInFrontendScenes(source))
 		return;
 
 	const char *uuid = obs_source_get_uuid(source);
 	blog(LOG_INFO, "[obs-shorts-vertical] Destroying independent Vertical Shorts camera '%s' (no remaining items)",
 	     obs_source_get_name(source));
+	if (pendingCameraSource && pendingCameraSource.Get() == source) {
+		pendingCameraUpdateSignal.Disconnect();
+		pendingCameraSource = nullptr;
+	}
 	if (uuid && *uuid)
 		independentCaptureUuids.remove(QString::fromUtf8(uuid));
 	obs_source_remove(source);
@@ -1740,20 +1803,40 @@ void ShortsDock::WatchIndependentCaptureInit(obs_source_t *created)
 {
 	if (!created)
 		return;
+
+	/* Keep an explicit strong ref for the entire configure/init window so Properties
+	 * and the Vertical Scene cannot race a premature destroy. */
+	pendingCameraUpdateSignal.Disconnect();
+	pendingCameraSource = created;
+	if (signal_handler_t *sh = obs_source_get_signal_handler(created)) {
+		pendingCameraUpdateSignal.Connect(sh, "update", OnPendingCameraUpdate, this);
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] Watching retained camera source %p for settings updates "
+		     "(Properties must edit THIS pointer)",
+		     (void *)created);
+	}
+
 	OBSSource held = created;
-	/* Shared across timers: deviceSelected / warned / forceOpenCount. */
 	struct WatchState {
 		bool deviceSelected = false;
 		bool warned = false;
+		bool triedSafeDefaults = false;
 		int forceOpenCount = 0;
+		qint64 deviceSelectedAtMs = 0;
 	};
 	QSharedPointer<WatchState> state(new WatchState());
 
-	const int delaysMs[] = {250, 750, 1500, 2500, 4000, 6000, 8000, 11000, 14000};
+	const int delaysMs[] = {500, 1000, 2000, 3500, 5000, 7000, 10000, 14000, 18000, 24000};
 	for (int delay : delaysMs) {
 		QTimer::singleShot(delay, this, [this, held, delay, state]() {
 			if (clearing || !held)
 				return;
+			/* Prove Properties and Vertical Shorts share the same obs_source_t. */
+			if (pendingCameraSource && pendingCameraSource.Get() != held.Get()) {
+				blog(LOG_ERROR,
+				     "[obs-shorts-vertical] CAMERA SOURCE POINTER MISMATCH: pending=%p held=%p",
+				     (void *)pendingCameraSource.Get(), (void *)held.Get());
+			}
 
 			obs_sceneitem_t *item = nullptr;
 			if (scene) {
@@ -1780,21 +1863,24 @@ void ShortsDock::WatchIndependentCaptureInit(obs_source_t *created)
 				}
 			}
 
-			LogCameraSourceDiagnostics(delay < 1000 ? "init_watch" : "init_poll", held, item, false);
+			LogCameraSourceDiagnostics("init_poll", held, item, false);
 
 			const std::string key = vsp::GetCaptureDeviceKey(held);
-			if (!key.empty()) {
-				if (!state->deviceSelected) {
-					state->deviceSelected = true;
-					LogCameraSettingsSnapshot("device_selected", held);
-				}
-				/* Device chosen but still no size: re-apply settings + dshow activate (bounded). */
-				if ((obs_source_get_width(held) == 0 || obs_source_get_height(held) == 0) &&
-				    state->forceOpenCount < 4) {
-					state->forceOpenCount++;
-					ForceCaptureDeviceOpen(held);
-					LogCameraSettingsSnapshot("after_force_open", held);
-				}
+			if (key.empty()) {
+				blog(LOG_INFO,
+				     "[obs-shorts-vertical] init_poll: still waiting for Properties to write "
+				     "video_device_id onto source %p",
+				     (void *)held.Get());
+				return;
+			}
+
+			if (!state->deviceSelected) {
+				state->deviceSelected = true;
+				state->deviceSelectedAtMs = QDateTime::currentMSecsSinceEpoch();
+				LogCameraSettingsSnapshot("device_selected_on_retained_source", held);
+				blog(LOG_INFO,
+				     "[obs-shorts-vertical] Device ID present on retained source %p — starting open",
+				     (void *)held.Get());
 			}
 
 			const uint32_t w = obs_source_get_width(held);
@@ -1803,17 +1889,30 @@ void ShortsDock::WatchIndependentCaptureInit(obs_source_t *created)
 				EnsureCanvasProgramChannel(true);
 				EnsurePreviewSceneShowing(true);
 				blog(LOG_INFO,
-				     "[obs-shorts-vertical] CAMERA INITIALIZED: '%s' %ux%u active=%d showing=%d "
-				     "(live frames expected)",
-				     obs_source_get_name(held), w, h, (int)obs_source_active(held),
-				     (int)obs_source_showing(held));
+				     "[obs-shorts-vertical] CAMERA INITIALIZED: source=%p '%s' %ux%u active=%d "
+				     "showing=%d (expect live frames)",
+				     (void *)held.Get(), obs_source_get_name(held), w, h,
+				     (int)obs_source_active(held), (int)obs_source_showing(held));
+				pendingCameraUpdateSignal.Disconnect();
+				pendingCameraSource = nullptr;
 				return;
+			}
+
+			if (state->forceOpenCount < 3) {
+				state->forceOpenCount++;
+				ForceCaptureDeviceOpen(held, false);
+			} else if (!state->triedSafeDefaults) {
+				state->triedSafeDefaults = true;
+				blog(LOG_WARNING,
+				     "[obs-shorts-vertical] Camera still 0x0 after device select — trying safe defaults");
+				ForceCaptureDeviceOpen(held, true);
+				LogCameraSettingsSnapshot("after_safe_defaults", held);
 			}
 		});
 	}
 
-	/* Bounded failure: device chosen but still 0×0. */
-	QTimer::singleShot(16000, this, [this, held, state]() {
+	/* Fail only after a device was selected and still 0×0 for several seconds. */
+	QTimer::singleShot(28000, this, [this, held, state]() {
 		if (clearing || !held)
 			return;
 		const uint32_t w = obs_source_get_width(held);
@@ -1827,20 +1926,27 @@ void ShortsDock::WatchIndependentCaptureInit(obs_source_t *created)
 		const std::string key = vsp::GetCaptureDeviceKey(held);
 		if (key.empty()) {
 			blog(LOG_ERROR,
-			     "[obs-shorts-vertical] CAMERA INITIALIZATION FAILED: no device identifier on source "
-			     "(Properties selection missing or not applied to this obs_source_t)");
-			QMessageBox::warning(this, Translate("AddSource"), Translate("CaptureInitFailedZeroSize"));
+			     "[obs-shorts-vertical] CAMERA INITIALIZATION FAILED: source %p never received a "
+			     "device identifier — Properties did not save onto the retained Vertical Shorts source "
+			     "(or user cancelled)",
+			     (void *)held.Get());
+			/* Do not spam if user simply left Properties open/cancelled. */
 			return;
 		}
 
 		blog(LOG_ERROR,
-		     "[obs-shorts-vertical] CAMERA INITIALIZATION FAILED: device_key=%s size=0x0 active=%d "
-		     "showing=%d — camera did not open / no frames",
-		     key.c_str(), (int)obs_source_active(held), (int)obs_source_showing(held));
+		     "[obs-shorts-vertical] CAMERA INITIALIZATION FAILED: source=%p device_key=%s size=0x0 "
+		     "active=%d showing=%d — plugin configured the source but the camera did not open. "
+		     "If Main OBS / another app also owns this camera, this is likely a DRIVER LIMITATION "
+		     "(no two independent capture sessions).",
+		     (void *)held.Get(), key.c_str(), (int)obs_source_active(held),
+		     (int)obs_source_showing(held));
 		if (!state->warned) {
 			state->warned = true;
 			QMessageBox::warning(this, Translate("AddSource"), Translate("CaptureIndependentBusy"));
 		}
+		pendingCameraUpdateSignal.Disconnect();
+		pendingCameraSource = nullptr;
 	});
 }
 
@@ -1854,12 +1960,9 @@ void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId,
 		}
 	}
 
-	/* Enumerate registered inputs and pick the real Windows VCD implementation. */
 	std::string createId = vsp::ResolveVideoCaptureSourceId();
-	if (createId.empty()) {
-		/* Fall back to menu-provided unversioned id → latest. */
+	if (createId.empty())
 		createId = vsp::ResolveLatestInputTypeId(unversionedId.c_str());
-	}
 	if (createId.empty() || !vsp::IsVideoCaptureSourceId(createId.c_str())) {
 		blog(LOG_ERROR,
 		     "[obs-shorts-vertical] Camera create FAILED: no supported Video Capture Device id "
@@ -1874,15 +1977,20 @@ void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId,
 	const uint32_t flags = obs_get_source_output_flags(createId.c_str());
 	blog(LOG_INFO,
 	     "[obs-shorts-vertical] Creating Vertical Shorts camera: source_id=%s display='%s' "
-	     "flags=0x%x type=input (obs_source_create)",
+	     "flags=0x%x (obs_source_create — NOT a temporary Properties-only source)",
 	     createId.c_str(), display ? display : "", flags);
 
-	const QString name = UniqueSourceName(label.isEmpty() ? QString::fromUtf8(display ? display : "Video Capture Device")
-							      : label);
+	const QString name = UniqueSourceName(label.isEmpty()
+						      ? QString::fromUtf8(display ? display : "Video Capture Device")
+						      : label);
 
-	/* Real libobs source with a valid settings object (defaults applied by create). */
 	OBSDataAutoRelease settings = obs_data_create();
+	/* Safe defaults before Properties: active, preferred negotiation. */
 	obs_data_set_bool(settings, "active", true);
+	obs_data_set_bool(settings, "deactivate_when_not_showing", false);
+	obs_data_set_int(settings, "res_type", 0);
+	obs_data_set_int(settings, "frame_interval", -1);
+	obs_data_set_int(settings, "video_format", 0);
 
 	obs_source_t *created =
 		obs_source_create(createId.c_str(), name.toUtf8().constData(), settings, nullptr);
@@ -1896,7 +2004,7 @@ void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId,
 	}
 
 	blog(LOG_INFO,
-	     "[obs-shorts-vertical] obs_source_create SUCCEEDED: ptr=%p id=%s name='%s' uuid=%s",
+	     "[obs-shorts-vertical] obs_source_create SUCCEEDED: retained_source=%p id=%s name='%s' uuid=%s",
 	     (void *)created, obs_source_get_id(created), obs_source_get_name(created),
 	     obs_source_get_uuid(created) ? obs_source_get_uuid(created) : "");
 
@@ -1926,20 +2034,23 @@ void ShortsDock::CreateIndependentVideoCapture(const std::string &unversionedId,
 	LogCameraSourceDiagnostics("after_add_to_scene", created, item, false);
 	EnsureCanvasProgramChannel(true);
 	EnsurePreviewSceneShowing(true);
-	ForceCaptureDeviceOpen(created);
 
-	/* Open real OBS Properties on the SAME source that is in the Vertical Scene. */
+	/* Do NOT Activate dshow before a device ID exists — that fails Video configuration
+	 * and is not how Main OBS opens cameras. Properties writes video_device_id onto THIS
+	 * same source, then we open. */
 	WatchIndependentCaptureInit(created);
+
 	if (obs_source_configurable(created)) {
 		blog(LOG_INFO,
-		     "[obs-shorts-vertical] Opening OBS Properties for camera source %p ('%s')",
+		     "[obs-shorts-vertical] Opening OBS Properties for retained camera source %p ('%s') "
+		     "— dialog must edit this pointer, not a temporary clone",
 		     (void *)created, obs_source_get_name(created));
 		obs_frontend_open_source_properties(created);
 	} else {
 		blog(LOG_ERROR, "[obs-shorts-vertical] Camera source is not configurable — cannot open Properties");
 	}
 
-	/* Balance create ref; scene item + Properties dialog retain the source. */
+	/* Balance create ref. Lifetime held by: scene item + pendingCameraSource + Properties. */
 	obs_source_release(created);
 	EmitSourceUiChanged();
 }
