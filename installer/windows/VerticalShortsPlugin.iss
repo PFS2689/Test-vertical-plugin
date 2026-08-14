@@ -93,13 +93,16 @@ AlwaysRestart=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+; No [InstallDelete] — upgrades must never wipe user configuration.
+; [UninstallDelete] only removes installer-owned binaries/data under the OBS tree.
+; OBS scene collections + Credential Manager secrets are never deleted on upgrade/uninstall.
+
 [Files]
 ; DLL → OBS obs-plugins\64bit (only during install phase; {app} is valid here)
-; restartreplace is a last-resort deferral if a handle briefly lingers after OBS exits.
-; Primary protection is EnsureOBSClosed + Restart Manager before the copy stage.
+; Do NOT use restartreplace as the normal upgrade path — close OBS, then replace.
 Source: "{#SourceDir}\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"; \
     DestDir: "{app}\obs-plugins\64bit"; \
-    Flags: ignoreversion uninsrestartdelete restartreplace
+    Flags: ignoreversion uninsrestartdelete
 ; Resources → OBS data\obs-plugins\obs-shorts-vertical\
 Source: "{#SourceDir}\obs-shorts-vertical\data\*"; \
     DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
@@ -112,6 +115,7 @@ Source: "{#SourceDir}\obs-shorts-vertical\INSTALL.txt"; \
     Flags: ignoreversion skipifsourcedoesntexist
 
 [UninstallDelete]
+; Uninstall-only cleanup of plugin binaries/data. Never runs during an in-place upgrade.
 Type: files; Name: "{app}\obs-plugins\64bit\obs-shorts-vertical.dll"
 Type: files; Name: "{app}\obs-plugins\64bit\obs-shorts-vertical.pdb"
 Type: filesandordirs; Name: "{app}\data\obs-plugins\obs-shorts-vertical"
@@ -122,9 +126,21 @@ const
   TH32CS_SNAPPROCESS = $00000002;
   MAX_PATH_CHARS = 260;
   INVALID_HANDLE_VALUE = -1;
-  GENERIC_READ = $80000000;
-  OPEN_EXISTING = 3;
-  FILE_SHARE_NONE = 0;
+  VS_GENERIC_READ = $80000000;
+  VS_GENERIC_WRITE = $40000000;
+  VS_OPEN_EXISTING = 3;
+  VS_CREATE_ALWAYS = 2;
+  VS_FILE_SHARE_NONE = 0;
+  VS_FILE_FLAG_DELETE_ON_CLOSE = $04000000;
+  VS_ERROR_ACCESS_DENIED = 5;
+  VS_ERROR_SHARING_VIOLATION = 32;
+  VS_ERROR_LOCK_VIOLATION = 33;
+
+  { PluginDllStatus values returned by ProbePluginDllStatus }
+  PDS_OK = 0;
+  PDS_MISSING = 1;
+  PDS_LOCKED = 2;
+  PDS_PERMISSION = 3;
 
 type
   TProcessEntry32 = record
@@ -159,6 +175,10 @@ function CreateFileW(lpFileName: string; dwDesiredAccess, dwShareMode: DWORD;
   lpSecurityAttributes: DWORD; dwCreationDisposition, dwFlagsAndAttributes: DWORD;
   hTemplateFile: THandle): THandle;
   external 'CreateFileW@kernel32.dll stdcall';
+function GetLastError: DWORD;
+  external 'GetLastError@kernel32.dll stdcall';
+procedure SetLastError(dwErrCode: DWORD);
+  external 'SetLastError@kernel32.dll stdcall';
 
 function AddBackslashIfNeeded(const Path: String): String;
 begin
@@ -443,24 +463,26 @@ begin
     Result := Candidate;
 end;
 
-(* Returns True when the DLL exists and cannot be opened exclusively (still locked). *)
-function IsPluginDllLocked: Boolean;
+function ResolvePluginDir: String;
 var
   DllPath: String;
-  H: THandle;
 begin
-  Result := False;
   DllPath := ResolvePluginDllPath;
-  if (DllPath = '') or (not FileExists(DllPath)) then
+  if DllPath <> '' then begin
+    Result := ExtractFileDir(DllPath);
     exit;
+  end;
 
-  { Exclusive open — fails while OBS (or anything else) holds the module. }
-  H := CreateFileW(DllPath, GENERIC_READ, FILE_SHARE_NONE, 0, OPEN_EXISTING,
-    FILE_ATTRIBUTE_NORMAL, 0);
-  if H = INVALID_HANDLE_VALUE then
-    Result := True
+  try
+    Result := ExpandConstant('{app}\obs-plugins\64bit');
+    exit;
+  except
+  end;
+
+  if GObsInstallPath <> '' then
+    Result := AddBackslashIfNeeded(GObsInstallPath) + 'obs-plugins\64bit'
   else
-    CloseHandle(H);
+    Result := ExpandConstant('{autopf}\obs-studio\obs-plugins\64bit');
 end;
 
 function IsOBSRunning: Boolean;
@@ -473,15 +495,68 @@ begin
             IsOBSProcessRunning;
 end;
 
-function ObsBlocksPluginInstall: Boolean;
+(* Probe existing DLL / plugin dir.
+   Distinguishes: replaceable (OK), missing, locked by another process, ACL/permission. *)
+function ProbePluginDllStatus: Integer;
+var
+  DllPath, DirPath, ProbePath: String;
+  H: THandle;
+  Err: DWORD;
 begin
-  { Only gate when an existing plugin DLL must be replaced/unlocked.
-    Fresh installs (no DLL yet) can proceed while OBS is running. }
-  if ResolvePluginDllPath = '' then begin
-    Result := False;
+  DllPath := ResolvePluginDllPath;
+  if (DllPath = '') or (not FileExists(DllPath)) then begin
+    Result := PDS_MISSING;
     exit;
   end;
-  Result := IsOBSRunning or IsPluginDllLocked;
+
+  SetLastError(0);
+  H := CreateFileW(DllPath, VS_GENERIC_READ or VS_GENERIC_WRITE, VS_FILE_SHARE_NONE, 0,
+    VS_OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if H <> INVALID_HANDLE_VALUE then begin
+    CloseHandle(H);
+    Result := PDS_OK;
+    exit;
+  end;
+
+  Err := GetLastError;
+  if (Err = VS_ERROR_SHARING_VIOLATION) or (Err = VS_ERROR_LOCK_VIOLATION) then begin
+    Result := PDS_LOCKED;
+    exit;
+  end;
+
+  { ERROR_ACCESS_DENIED (5) is ambiguous on Windows — often means in-use.
+    If OBS is running, treat as locked. Otherwise distinguish via a dir write probe. }
+  if IsOBSRunning then begin
+    Result := PDS_LOCKED;
+    exit;
+  end;
+
+  DirPath := ResolvePluginDir;
+  ProbePath := AddBackslashIfNeeded(DirPath) + '~vs-write-probe.tmp';
+  SetLastError(0);
+  H := CreateFileW(ProbePath, VS_GENERIC_WRITE, VS_FILE_SHARE_NONE, 0, VS_CREATE_ALWAYS,
+    FILE_ATTRIBUTE_NORMAL or VS_FILE_FLAG_DELETE_ON_CLOSE, 0);
+  if H = INVALID_HANDLE_VALUE then begin
+    Err := GetLastError;
+    if (Err = VS_ERROR_ACCESS_DENIED) or (not IsAdminInstallMode) then
+      Result := PDS_PERMISSION
+    else
+      Result := PDS_LOCKED;
+  end else begin
+    CloseHandle(H);
+    { Directory is writable but DLL open failed without OBS → still in use. }
+    Result := PDS_LOCKED;
+  end;
+end;
+
+function IsPluginDllLocked: Boolean;
+begin
+  Result := ProbePluginDllStatus = PDS_LOCKED;
+end;
+
+function ExistingPluginNeedsReplace: Boolean;
+begin
+  Result := ResolvePluginDllPath <> '';
 end;
 
 function ConfirmUpgrade(const PrevVer, NewVer: String): Boolean;
@@ -497,44 +572,91 @@ begin
     MB_OKCANCEL, ['&Upgrade', 'Cancel'], 0) = IDOK;
 end;
 
-(* Blocks until OBS is closed and the plugin DLL is unlocked — never force-kills OBS. *)
-function EnsureOBSClosed: Boolean;
+function ShowObsRunningDialog: Integer;
+begin
+  Result := MsgBox(
+    'OBS Studio is currently running.'#13#10#13#10 +
+    'OBS must be closed before Vertical Shorts can be installed or updated.'#13#10#13#10 +
+    'Please close OBS Studio, then click Retry.',
+    mbConfirmation, MB_RETRYCANCEL);
+end;
+
+function ShowDllStillLockedDialog: Integer;
+begin
+  Result := MsgBox(
+    'Vertical Shorts could not update because the existing plugin file is still in use.'#13#10#13#10 +
+    'Please make sure OBS Studio is completely closed and try again.',
+    mbError, MB_RETRYCANCEL);
+end;
+
+function ShowPermissionDeniedDialog: Integer;
+begin
+  Result := MsgBox(
+    'Vertical Shorts could not update the OBS plugin directory.'#13#10#13#10 +
+    'Please run the installer with administrator privileges.',
+    mbError, MB_OK);
+end;
+
+(* Blocks until OBS is closed and the plugin DLL is unlocked — never force-kills OBS.
+   Returns False if the user cancels or a non-retryable error occurs. *)
+function EnsurePluginReplaceable: Boolean;
 var
   Answer: Integer;
+  Status: Integer;
   I: Integer;
 begin
   Result := True;
-  if not ObsBlocksPluginInstall then
+
+  { Fresh install — nothing to replace. }
+  if not ExistingPluginNeedsReplace then
     exit;
 
-  while ObsBlocksPluginInstall do begin
-    Answer := MsgBox(
-      'OBS Studio must be closed before Vertical Shorts can be updated.'#13#10#13#10 +
-      'Please close OBS Studio to continue.',
-      mbConfirmation, MB_RETRYCANCEL);
+  while True do begin
+    if IsOBSRunning then begin
+      Answer := ShowObsRunningDialog;
+      if Answer <> IDRETRY then begin
+        Result := False;
+        exit;
+      end;
+      for I := 1 to 40 do begin
+        if not IsOBSRunning then
+          Break;
+        Sleep(250);
+      end;
+      Continue;
+    end;
 
-    if Answer <> IDRETRY then begin
+    Status := ProbePluginDllStatus;
+    if (Status = PDS_OK) or (Status = PDS_MISSING) then begin
+      Result := True;
+      exit;
+    end;
+
+    if Status = PDS_PERMISSION then begin
+      ShowPermissionDeniedDialog;
       Result := False;
       exit;
     end;
 
-    { Give OBS a moment to release the DLL after the user closes it. }
-    for I := 1 to 20 do begin
-      if not ObsBlocksPluginInstall then
+    { PDS_LOCKED — OBS may have exited but the module handle has not released yet. }
+    Answer := ShowDllStillLockedDialog;
+    if Answer <> IDRETRY then begin
+      Result := False;
+      exit;
+    end;
+    for I := 1 to 40 do begin
+      Status := ProbePluginDllStatus;
+      if (Status = PDS_OK) or (Status = PDS_MISSING) then
         Break;
       Sleep(250);
     end;
   end;
+end;
 
-  { Final verification: DLL must be replaceable before file-copy stage. }
-  if IsPluginDllLocked then begin
-    MsgBox(
-      'OBS Studio must be closed before Vertical Shorts can be updated.'#13#10#13#10 +
-      'Please close OBS Studio to continue.'#13#10#13#10 +
-      'The plugin DLL is still locked. Close OBS completely, then run Setup again.',
-      mbError, MB_OK);
-    Result := False;
-  end;
+(* Compatibility wrapper used by InitializeSetup / PrepareToInstall. *)
+function EnsureOBSClosed: Boolean;
+begin
+  Result := EnsurePluginReplaceable;
 end;
 
 function CopyFileIfExists(const Src, Dest: String): Boolean;
@@ -669,8 +791,18 @@ begin
         '  C:\Program Files\obs-studio',
         mbError, MB_OK);
       Result := False;
-    end else
+    end else begin
       GObsInstallPath := WizardDirValue;
+      GExistingPluginDll :=
+        AddBackslashIfNeeded(WizardDirValue) + 'obs-plugins\64bit\obs-shorts-vertical.dll';
+      if not FileExists(GExistingPluginDll) then
+        GExistingPluginDll := FindExistingPluginDll;
+      GIsUpgrade := IsUpgradeInstall;
+    end;
+  end else if CurPageID = wpReady then begin
+    { Final gate before install phase — Retry loop, never force-kill OBS. }
+    if not EnsurePluginReplaceable then
+      Result := False;
   end;
 end;
 
@@ -691,25 +823,50 @@ begin
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Status: Integer;
+  AppDll: String;
 begin
   NeedsRestart := False;
   Result := '';
 
-  { Gate BEFORE file copy / DeleteFile — never reach "DeleteFile failed; code 5". }
-  if ObsBlocksPluginInstall then begin
-    if not EnsureOBSClosed then begin
-      Result :=
-        'OBS Studio must be closed before Vertical Shorts can be updated. ' +
-        'Please close OBS Studio and retry Setup.';
+  { Gate BEFORE file copy / DeleteFile — never reach "DeleteFile failed; code 5".
+    Windows reboot must not be the normal upgrade path for this OBS plugin. }
+  AppDll := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.dll');
+  if FileExists(AppDll) then
+    GExistingPluginDll := AppDll;
+
+  if ExistingPluginNeedsReplace then begin
+    if not EnsurePluginReplaceable then begin
+      if IsOBSRunning then
+        Result := 'OBS Studio must be closed before Vertical Shorts can be updated.'
+      else begin
+        Status := ProbePluginDllStatus;
+        if Status = PDS_PERMISSION then
+          Result :=
+            'Vertical Shorts could not update the OBS plugin directory. ' +
+            'Please run the installer with administrator privileges.'
+        else
+          Result :=
+            'Vertical Shorts could not update because the existing plugin file is still in use. ' +
+            'Please make sure OBS Studio is completely closed and try again.';
+      end;
       exit;
     end;
-  end;
 
-  if IsPluginDllLocked then begin
-    Result :=
-      'OBS Studio must be closed before Vertical Shorts can be updated. ' +
-      'The plugin DLL is still locked. Close OBS Studio completely and retry.';
-    exit;
+    Status := ProbePluginDllStatus;
+    if Status = PDS_LOCKED then begin
+      Result :=
+        'Vertical Shorts could not update because the existing plugin file is still in use. ' +
+        'Please make sure OBS Studio is completely closed and try again.';
+      exit;
+    end;
+    if Status = PDS_PERMISSION then begin
+      Result :=
+        'Vertical Shorts could not update the OBS plugin directory. ' +
+        'Please run the installer with administrator privileges.';
+      exit;
+    end;
   end;
 
   if not IsValidObsDir(ExpandConstant('{app}')) then begin
@@ -722,6 +879,7 @@ begin
       Result := 'Could not create a lightweight upgrade backup under LocalAppData.';
       exit;
     end;
+    { Binary-only cleanup. Never touches scene collections or Credential Manager. }
     RemoveObsoletePluginBins;
   end;
 end;
