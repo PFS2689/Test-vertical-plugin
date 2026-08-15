@@ -1,0 +1,273 @@
+#include "capture-source-share.hpp"
+
+#include <obs-module.h>
+
+#include <cstring>
+#include <initializer_list>
+#include <utility>
+
+namespace vsp {
+namespace {
+
+bool ContainsInsensitive(const char *hay, const char *needle)
+{
+	if (!hay || !needle || !*needle)
+		return false;
+	const size_t n = strlen(needle);
+	for (const char *p = hay; *p; ++p) {
+		size_t i = 0;
+		while (i < n) {
+			char a = p[i];
+			char b = needle[i];
+			if (a >= 'A' && a <= 'Z')
+				a = char(a - 'A' + 'a');
+			if (b >= 'A' && b <= 'Z')
+				b = char(b - 'A' + 'a');
+			if (a != b)
+				break;
+			++i;
+		}
+		if (i == n)
+			return true;
+		if (!*(p + 1))
+			break;
+	}
+	return false;
+}
+
+const char *FirstNonEmptySetting(obs_data_t *settings, std::initializer_list<const char *> keys)
+{
+	if (!settings)
+		return nullptr;
+	for (const char *key : keys) {
+		const char *val = obs_data_get_string(settings, key);
+		if (val && *val)
+			return val;
+	}
+	return nullptr;
+}
+
+} // namespace
+
+bool IsVideoCaptureSourceId(const char *id)
+{
+	if (!id || !*id)
+		return false;
+	/* Exact common IDs first, then substring fallback for versioned plugins.
+	 * Do not match by localized display name ("Video Capture Device"). */
+	if (strcmp(id, "dshow_input") == 0 || strcmp(id, "av_capture_input") == 0 ||
+	    strcmp(id, "v4l2_input") == 0 || strcmp(id, "dshow") == 0 || strcmp(id, "av_capture") == 0 ||
+	    strcmp(id, "v4l2") == 0)
+		return true;
+	return ContainsInsensitive(id, "dshow") || ContainsInsensitive(id, "av_capture") ||
+	       ContainsInsensitive(id, "v4l2");
+}
+
+std::string ResolveLatestInputTypeId(const char *idOrUnversioned)
+{
+	if (!idOrUnversioned || !*idOrUnversioned)
+		return {};
+	const char *latest = obs_get_latest_input_type_id(idOrUnversioned);
+	if (latest && *latest)
+		return latest;
+	return idOrUnversioned;
+}
+
+std::string ResolveVideoCaptureSourceId()
+{
+	size_t idx = 0;
+	const char *typeId = nullptr;
+	const char *unversioned = nullptr;
+	std::string preferred;
+	std::string fallback;
+
+	while (obs_enum_input_types2(idx++, &typeId, &unversioned)) {
+		if (!typeId || !*typeId)
+			continue;
+		const char *stable = (unversioned && *unversioned) ? unversioned : typeId;
+		const std::string latest = ResolveLatestInputTypeId(stable);
+		const char *id = !latest.empty() ? latest.c_str() : typeId;
+		const char *display = obs_source_get_display_name(id);
+		const uint32_t flags = obs_get_source_output_flags(id);
+
+		blog(LOG_INFO,
+		     "[obs-shorts-vertical] Enum input type: id=%s unversioned=%s display='%s' "
+		     "flags=0x%x video=%d async=%d audio=%d",
+		     id, stable, display ? display : "", flags, (flags & OBS_SOURCE_VIDEO) ? 1 : 0,
+		     (flags & OBS_SOURCE_ASYNC) ? 1 : 0, (flags & OBS_SOURCE_AUDIO) ? 1 : 0);
+
+		const bool byId = IsVideoCaptureSourceId(id) || IsVideoCaptureSourceId(stable);
+		const bool byCaps = (flags & OBS_SOURCE_VIDEO) && (flags & OBS_SOURCE_ASYNC) &&
+				    (flags & OBS_SOURCE_DO_NOT_DUPLICATE);
+		if (!byId && !byCaps)
+			continue;
+
+		if (ContainsInsensitive(id, "dshow") || ContainsInsensitive(stable, "dshow")) {
+			preferred = id;
+			blog(LOG_INFO,
+			     "[obs-shorts-vertical] Selected Windows Video Capture Device source id=%s display='%s'",
+			     id, display ? display : "");
+		} else if (fallback.empty() && byId) {
+			fallback = id;
+		}
+	}
+
+	if (!preferred.empty())
+		return preferred;
+	if (!fallback.empty()) {
+		blog(LOG_INFO, "[obs-shorts-vertical] Selected Video Capture Device source id=%s (non-dshow fallback)",
+		     fallback.c_str());
+		return fallback;
+	}
+	blog(LOG_ERROR, "[obs-shorts-vertical] No Video Capture Device source type registered in this OBS build");
+	return {};
+}
+
+std::string CaptureSourceFamily(const char *id)
+{
+	if (!id || !*id)
+		return {};
+	if (ContainsInsensitive(id, "dshow"))
+		return "dshow";
+	if (ContainsInsensitive(id, "av_capture"))
+		return "av_capture";
+	if (ContainsInsensitive(id, "v4l2"))
+		return "v4l2";
+	return id ? id : "";
+}
+
+std::string GetCaptureDeviceKeyFromSettings(const char *typeId, obs_data_t *settings)
+{
+	const std::string family = CaptureSourceFamily(typeId);
+	if (family.empty() || !settings)
+		return {};
+
+	const char *deviceId = nullptr;
+	if (family == "dshow") {
+		/* Windows DirectShow: path-based id is stable across renames. */
+		deviceId = FirstNonEmptySetting(settings, {"video_device_id", "last_video_device_id", "video_device"});
+	} else if (family == "av_capture") {
+		/* macOS AVFoundation unique device string. */
+		deviceId = FirstNonEmptySetting(settings, {"device", "device_uid", "uid", "video_device"});
+	} else if (family == "v4l2") {
+		/* Linux V4L2 node path, e.g. /dev/video0. */
+		deviceId = FirstNonEmptySetting(settings, {"device_id", "device"});
+	} else {
+		deviceId = FirstNonEmptySetting(settings, {"video_device_id", "device_id", "device", "uid"});
+	}
+
+	if (!deviceId || !*deviceId)
+		return {};
+
+	return family + "|" + deviceId;
+}
+
+std::string GetCaptureDeviceKey(obs_source_t *source)
+{
+	if (!source)
+		return {};
+	const char *id = obs_source_get_id(source);
+	if (!IsVideoCaptureSourceId(id))
+		return {};
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	return GetCaptureDeviceKeyFromSettings(id, settings);
+}
+
+std::string GetCaptureDeviceDisplayName(obs_source_t *source)
+{
+	if (!source)
+		return {};
+	const char *id = obs_source_get_id(source);
+	OBSDataAutoRelease settings = obs_source_get_settings(source);
+	if (!settings)
+		return {};
+	const std::string family = CaptureSourceFamily(id);
+	const char *name = nullptr;
+	if (family == "dshow")
+		name = FirstNonEmptySetting(settings, {"video_device", "last_video_device"});
+	else if (family == "av_capture")
+		name = FirstNonEmptySetting(settings, {"device_name", "device", "uid"});
+	else if (family == "v4l2")
+		name = FirstNonEmptySetting(settings, {"device_id", "device"});
+	else
+		name = FirstNonEmptySetting(settings, {"video_device", "device_name", "device", "device_id"});
+	return name ? name : "";
+}
+
+obs_source_t *FindExistingCaptureByDeviceKey(const std::string &deviceKey, obs_source_t *exclude)
+{
+	if (deviceKey.empty())
+		return nullptr;
+
+	struct Ctx {
+		const std::string *key;
+		obs_source_t *exclude;
+		obs_source_t *found;
+	} ctx{&deviceKey, exclude, nullptr};
+
+	obs_enum_sources(
+		[](void *param, obs_source_t *source) -> bool {
+			auto *c = static_cast<Ctx *>(param);
+			if (!source || source == c->exclude)
+				return true;
+			if (!IsVideoCaptureSourceId(obs_source_get_id(source)))
+				return true;
+			const std::string key = GetCaptureDeviceKey(source);
+			if (key.empty() || key != *c->key)
+				return true;
+			c->found = obs_source_get_ref(source);
+			return false;
+		},
+		&ctx);
+
+	return ctx.found;
+}
+
+std::vector<CaptureSourceInfo> EnumerateCaptureSources()
+{
+	std::vector<CaptureSourceInfo> out;
+	obs_enum_sources(
+		[](void *param, obs_source_t *source) -> bool {
+			auto *list = static_cast<std::vector<CaptureSourceInfo> *>(param);
+			if (!source || !IsVideoCaptureSourceId(obs_source_get_id(source)))
+				return true;
+			CaptureSourceInfo info;
+			info.source = OBSSource(source);
+			info.typeId = obs_source_get_id(source) ? obs_source_get_id(source) : "";
+			info.deviceKey = GetCaptureDeviceKey(source);
+			const char *name = obs_source_get_name(source);
+			info.displayName = name ? name : "";
+			info.width = obs_source_get_width(source);
+			info.height = obs_source_get_height(source);
+			info.active = obs_source_active(source);
+			info.showing = obs_source_showing(source);
+			list->push_back(std::move(info));
+			return true;
+		},
+		&out);
+	return out;
+}
+
+bool VerticalSceneHasSource(obs_scene_t *scene, obs_source_t *source)
+{
+	if (!scene || !source)
+		return false;
+	struct Data {
+		obs_source_t *source;
+		bool found;
+	} data{source, false};
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *param) -> bool {
+			auto *d = static_cast<Data *>(param);
+			if (obs_sceneitem_get_source(item) == d->source) {
+				d->found = true;
+				return false;
+			}
+			return true;
+		},
+		&data);
+	return data.found;
+}
+
+} // namespace vsp
