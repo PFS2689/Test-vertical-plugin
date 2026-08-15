@@ -204,6 +204,12 @@ private slots:
 private:
 	void BuildUI();
 	void EnsureDefaultVerticalScene();
+	/* Full Vertical Shorts PROGRAM path:
+	 * obs_canvas_t (1080x1920, global OBS FPS) → Vertical Scene 1 → channel 0 → dock render.
+	 * Never uses Main OBS scenes/sources. */
+	void BootstrapVerticalCanvasPipeline();
+	void MaybeBootstrapIndependentCamera();
+	static size_t CountSceneItems(obs_scene_t *sc);
 	void RefreshVerticalWorkspace(bool force = false);
 	void ApplyCanvasFromSettings();
 	void CreateView();
@@ -334,6 +340,7 @@ private:
 	bool loadingSettings = false;
 	bool shuttingDown = false;
 	bool sharedCameraNoticeShown = false;
+	bool bootstrapCameraAttempted = false;
 	/* UUIDs of Vertical Shorts–owned independent capture sources created this session. */
 	QSet<QString> independentCaptureUuids;
 	/* Strong ref while a new camera is being configured/initialized (same pointer as Properties). */
