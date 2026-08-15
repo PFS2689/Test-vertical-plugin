@@ -67,13 +67,8 @@ endif()
 # Human-visible Build ID for proving OBS loaded this exact binary (not product version).
 # Override with -DPLUGIN_BUILD_ID=... for a named verification build.
 if(NOT PLUGIN_BUILD_ID)
-  string(TIMESTAMP _build_id_date "%Y-%m-%d" UTC)
-  if(DEFINED ENV{GITHUB_RUN_NUMBER} AND NOT "$ENV{GITHUB_RUN_NUMBER}" STREQUAL "")
-    set(PLUGIN_BUILD_ID "${_build_id_date}-TEST-$ENV{GITHUB_RUN_NUMBER}")
-  else()
-    set(PLUGIN_BUILD_ID "${_build_id_date}-TEST-001")
-  endif()
-  unset(_build_id_date)
+  # Pinned verification ID for proving same-version upgrades install the newest DLL.
+  set(PLUGIN_BUILD_ID "2026-08-15-TEST-001")
 endif()
 message(STATUS "Vertical Shorts Plugin Build ID: ${PLUGIN_BUILD_ID}")
 
