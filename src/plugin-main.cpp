@@ -155,8 +155,8 @@ static void FrontendEvent(enum obs_frontend_event event, void *)
 bool obs_module_load(void)
 {
 	blog(LOG_INFO, "[obs-shorts-vertical] Loading Vertical Shorts Plugin %s (built %s, libobs %s)", PLUGIN_VERSION,
-	     PLUGIN_BUILD_TIMESTAMP,
-	     obs_get_version_string());
+	     PLUGIN_BUILD_TIMESTAMP, obs_get_version_string());
+	blog(LOG_INFO, "[obs-shorts-vertical] Vertical Shorts Build ID: %s", PLUGIN_BUILD_ID);
 
 	const char *bin = obs_get_module_binary_path(obs_current_module());
 	const char *data = obs_get_module_data_path(obs_current_module());

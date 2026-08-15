@@ -180,6 +180,12 @@ void SettingsDialog::BuildAboutTab(QWidget *tab)
 	version->setFont(vf);
 	lay->addWidget(version);
 
+	auto *buildId = new QLabel(tab);
+	buildId->setText(QStringLiteral("Build ID: %1").arg(QString::fromUtf8(PLUGIN_BUILD_ID)));
+	buildId->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	buildId->setWordWrap(true);
+	lay->addWidget(buildId);
+
 	auto *built = new QLabel(tab);
 	built->setText(QStringLiteral("Built: %1 UTC").arg(QString::fromUtf8(PLUGIN_BUILD_TIMESTAMP)));
 	built->setWordWrap(true);

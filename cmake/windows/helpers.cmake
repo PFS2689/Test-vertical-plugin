@@ -65,6 +65,10 @@ function(set_target_properties_plugin target)
 
   configure_file(cmake/windows/resources/resource.rc.in "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.rc")
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.rc")
+
+  # Stamp Build ID next to the installed DLL for packaging / upgrade verification.
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/build-id.txt" "${PLUGIN_BUILD_ID}\n")
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/build-id.txt" DESTINATION "${target}/bin/64bit")
 endfunction()
 
 # Helper function to add resources into bundle

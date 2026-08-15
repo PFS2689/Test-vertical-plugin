@@ -99,11 +99,16 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; DLL → OBS obs-plugins\64bit (only during install phase; {app} is valid here)
-; Do NOT use restartreplace as the normal upgrade path — close OBS, then replace.
+; Same product version (1.0.5) across rebuilds: PE ProductVersion stays 1.0.5, but
+; FileVersion 4th component changes per CI build. Use replacesameversion so a
+; same-product-version development upgrade STILL replaces the DLL.
+; Do NOT rely on ignoreversion alone for this path — replacesameversion is the
+; correct same-version upgrade flag. Do NOT use restartreplace as the normal path.
 Source: "{#SourceDir}\obs-shorts-vertical\bin\64bit\obs-shorts-vertical.dll"; \
     DestDir: "{app}\obs-plugins\64bit"; \
-    Flags: ignoreversion uninsrestartdelete
+    Flags: replacesameversion uninsrestartdelete
 ; Resources → OBS data\obs-plugins\obs-shorts-vertical\
+; Locale/data files often lack PE version resources — ignoreversion is appropriate here.
 Source: "{#SourceDir}\obs-shorts-vertical\data\*"; \
     DestDir: "{app}\data\obs-plugins\obs-shorts-vertical"; \
     Flags: ignoreversion recursesubdirs createallsubdirs uninsrestartdelete
@@ -711,17 +716,42 @@ var
   P: String;
 begin
   Result := True;
-  (* New layout leftovers under OBS root (app constant valid in PrepareToInstall). *)
+
+  { Wrong / leftover DLL locations from older installers — remove duplicates only. }
+  P := ExpandConstant('{app}\bin\64bit\obs-shorts-vertical.dll');
+  if FileExists(P) then begin
+    if not DeleteFile(P) then
+      Log('WARNING: could not delete obsolete DLL: ' + P);
+  end;
+  P := ExpandConstant('{app}\bin\64bit\obs-shorts-vertical.pdb');
+  if FileExists(P) then
+    DeleteFile(P);
+
   P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical.pdb');
   if FileExists(P) then
     DeleteFile(P);
 
-  { Legacy ProgramData tree from earlier builds — binaries only. }
+  { Stale rename leftovers — never leave side-by-side DLL copies. }
+  P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical-old.dll');
+  if FileExists(P) then
+    DeleteFile(P);
+  P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical-copy.dll');
+  if FileExists(P) then
+    DeleteFile(P);
+  P := ExpandConstant('{app}\obs-plugins\64bit\obs-shorts-vertical-2.dll');
+  if FileExists(P) then
+    DeleteFile(P);
+
+  { Legacy ProgramData / AppData third-party plugin trees — binaries only. }
   P := ExpandConstant('{commonappdata}\obs-studio\plugins\obs-shorts-vertical');
   if DirExists(P) then
     DelTree(P, True, True, True);
 
   P := ExpandConstant('{userappdata}\obs-studio\plugins\obs-shorts-vertical');
+  if DirExists(P) then
+    DelTree(P, True, True, True);
+
+  P := ExpandConstant('{localappdata}\obs-studio\plugins\obs-shorts-vertical');
   if DirExists(P) then
     DelTree(P, True, True, True);
 end;
@@ -901,10 +931,13 @@ begin
     SetIniString('Install', 'InstalledTimestampUtc',
       GetDateTimeString('yyyy-mm-dd"T"hh:nn:ss"Z"', #0, #0), MetaPath);
     SetIniString('Install', 'UpgradeBackup', GUpgradeBackupDir, MetaPath);
+    { Prefer Build ID stamped into staging install-meta.ini by the packaging script. }
+    if GetIniString('Install', 'BuildId', '', MetaPath) = '' then
+      SetIniString('Install', 'BuildId', '(see Settings → About / OBS log)', MetaPath);
     SetIniString('Install', 'ConfigLocation',
       'OBS scene collection key obs-shorts-vertical + Windows Credential Manager', MetaPath);
     SetIniString('Install', 'Notes',
-      'DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten.', MetaPath);
+      'DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten. Same-version upgrades use replacesameversion.', MetaPath);
   end;
 end;
 

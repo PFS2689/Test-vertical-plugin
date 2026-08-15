@@ -31,6 +31,8 @@ extern const char *PLUGIN_NAME;
 extern const char *PLUGIN_VERSION;
 /* UTC ISO-8601 configure/build stamp (not the product version). */
 extern const char *PLUGIN_BUILD_TIMESTAMP;
+/* Unique build identifier for install/upgrade verification (not the product version). */
+extern const char *PLUGIN_BUILD_ID;
 
 void obs_log(int log_level, const char *format, ...);
 extern void blogva(int log_level, const char *format, va_list args);

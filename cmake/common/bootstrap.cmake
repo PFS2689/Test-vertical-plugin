@@ -64,6 +64,19 @@ if(NOT PLUGIN_BUILD_TIMESTAMP)
   string(TIMESTAMP PLUGIN_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 endif()
 
+# Human-visible Build ID for proving OBS loaded this exact binary (not product version).
+# Override with -DPLUGIN_BUILD_ID=... for a named verification build.
+if(NOT PLUGIN_BUILD_ID)
+  string(TIMESTAMP _build_id_date "%Y-%m-%d" UTC)
+  if(DEFINED ENV{GITHUB_RUN_NUMBER} AND NOT "$ENV{GITHUB_RUN_NUMBER}" STREQUAL "")
+    set(PLUGIN_BUILD_ID "${_build_id_date}-TEST-$ENV{GITHUB_RUN_NUMBER}")
+  else()
+    set(PLUGIN_BUILD_ID "${_build_id_date}-TEST-001")
+  endif()
+  unset(_build_id_date)
+endif()
+message(STATUS "Vertical Shorts Plugin Build ID: ${PLUGIN_BUILD_ID}")
+
 string(REPLACE "." ";" _version_canonical "${_version}")
 list(GET _version_canonical 0 PLUGIN_VERSION_MAJOR)
 list(GET _version_canonical 1 PLUGIN_VERSION_MINOR)
@@ -71,6 +84,16 @@ list(GET _version_canonical 2 PLUGIN_VERSION_PATCH)
 unset(_version_canonical)
 
 include(buildnumber)
+# PE VERSIONINFO fields are 16-bit; clamp build number for FileVersion fourth component.
+# ProductVersion stays PLUGIN_VERSION (e.g. 1.0.5) — public version unchanged.
+if(PLUGIN_BUILD_NUMBER MATCHES "^[0-9]+$")
+  math(EXPR PLUGIN_FILE_VERSION_BUILD "${PLUGIN_BUILD_NUMBER} % 65535")
+else()
+  set(PLUGIN_FILE_VERSION_BUILD 1)
+endif()
+if(PLUGIN_FILE_VERSION_BUILD EQUAL 0)
+  set(PLUGIN_FILE_VERSION_BUILD 1)
+endif()
 include(osconfig)
 
 # Allow selection of common build types via UI

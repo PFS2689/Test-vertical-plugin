@@ -105,20 +105,44 @@ function New-InstallerStaging {
     $displayName = if ($buildSpec.displayName) { [string]$buildSpec.displayName } else { 'Vertical Shorts Plugin' }
     $ver = [string]$buildSpec.version
     $packageStamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $buildIdFile = Join-Path $dstPlugin 'bin\64bit\build-id.txt'
+    $buildIdFromDllDir = Join-Path $dstPlugin 'build-id.txt'
+    $buildId = $null
+    foreach ($candidate in @($buildIdFile, $buildIdFromDllDir, (Join-Path $srcPlugin 'build-id.txt'), (Join-Path $srcPlugin 'bin\64bit\build-id.txt'))) {
+        if (Test-Path $candidate) {
+            $buildId = (Get-Content -Path $candidate -Raw).Trim()
+            if ($buildId) { break }
+        }
+    }
+    if (-not $buildId) {
+        $runNum = $env:GITHUB_RUN_NUMBER
+        $day = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+        if ($runNum) { $buildId = "$day-TEST-$runNum" } else { $buildId = "$day-TEST-001" }
+    }
+    $dllPath = Join-Path $dstPlugin 'bin\64bit\obs-shorts-vertical.dll'
+    $dllHash = ''
+    if (Test-Path $dllPath) {
+        $dllHash = (Get-FileHash -Path $dllPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Write-Host "Staged DLL SHA-256: $dllHash"
+        Write-Host "Staged DLL size: $((Get-Item $dllPath).Length) bytes"
+        Write-Host "Staged DLL Build ID: $buildId"
+    }
     $metaPath = Join-Path $dstPlugin 'install-meta.ini'
     @"
 [Install]
 DisplayName=$displayName
 DisplayVersion=$ver
 AppId={$appId}
+BuildId=$buildId
+DllSha256=$dllHash
 InstallDir={autopf}\obs-studio
 PluginDll={autopf}\obs-studio\obs-plugins\64bit\obs-shorts-vertical.dll
 PluginData={autopf}\obs-studio\data\obs-plugins\obs-shorts-vertical
 PackageTimestampUtc=$packageStamp
 ConfigLocation=OBS scene collection key obs-shorts-vertical + Windows Credential Manager
-Notes=DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten.
+Notes=DLL under obs-plugins\64bit; data under data\obs-plugins\obs-shorts-vertical. User config is never overwritten. Same-version upgrades use replacesameversion.
 "@ | Set-Content -Path $metaPath -Encoding UTF8
-    Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver, PackageTimestampUtc=$packageStamp)"
+    Write-Host "Wrote install-meta.ini (AppId={$appId}, version=$ver, BuildId=$buildId, PackageTimestampUtc=$packageStamp)"
 
     return $dstPlugin
 }

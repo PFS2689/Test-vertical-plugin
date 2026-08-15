@@ -1,5 +1,5 @@
 1 VERSIONINFO
- FILEVERSION ${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0
+ FILEVERSION ${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},${PLUGIN_FILE_VERSION_BUILD}
  PRODUCTVERSION ${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0
  FILEFLAGSMASK 0x0L
 #ifdef _DEBUG
@@ -17,13 +17,13 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Vertical Shorts Plugin Contributors"
             VALUE "FileDescription", "Professional Vertical Streaming Plugin for OBS Studio"
-            VALUE "FileVersion", "${PROJECT_VERSION}"
+            VALUE "FileVersion", "${PROJECT_VERSION}.${PLUGIN_FILE_VERSION_BUILD}"
             VALUE "InternalName", "obs-shorts-vertical"
             VALUE "LegalCopyright", "(C) ${CURRENT_YEAR} Vertical Shorts Plugin Contributors"
             VALUE "OriginalFilename", "obs-shorts-vertical.dll"
             VALUE "ProductName", "Vertical Shorts Plugin"
             VALUE "ProductVersion", "${PROJECT_VERSION}"
-            VALUE "Comments", "Open-source OBS Studio plugin. Built ${PLUGIN_BUILD_TIMESTAMP}. Source: https://github.com/PFS2689/verticalshorts"
+            VALUE "Comments", "Build ID ${PLUGIN_BUILD_ID}. Built ${PLUGIN_BUILD_TIMESTAMP}. Source: https://github.com/PFS2689/verticalshorts"
         END
     END
     BLOCK "VarFileInfo"
